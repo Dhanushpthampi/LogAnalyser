@@ -104,15 +104,16 @@
             <div class="top-pane-content">
               <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste adb logcat output here. Parsed results below update immediately."></textarea>
               <div id="all-grid-card" class="grid-card-inner" hidden>
+                <!-- Header sits OUTSIDE log-grid so position:absolute rows don't cover line 1 -->
+                <div class="grid-head grid-row" aria-hidden="true">
+                  <span>LINE</span>
+                  <span>TIME</span>
+                  <span>LVL</span>
+                  <span>PID/TID</span>
+                  <span>COMPONENT</span>
+                  <span>MESSAGE</span>
+                </div>
                 <div id="all-log-grid" class="log-grid" tabindex="0" aria-label="All log lines">
-                  <div class="grid-head grid-row">
-                    <span>LINE</span>
-                    <span>TIME</span>
-                    <span>LVL</span>
-                    <span>PID/TID</span>
-                    <span>COMPONENT</span>
-                    <span>MESSAGE</span>
-                  </div>
                   <div id="all-grid-spacer"></div>
                   <div id="all-grid-rows"></div>
                   <p id="all-empty-state" class="empty-state">No log lines retained.</p>
@@ -136,15 +137,16 @@
               </div>
             </header>
             <div class="grid-card-inner">
+              <!-- Header sits OUTSIDE log-grid so position:absolute rows don't cover line 1 -->
+              <div class="grid-head grid-row" aria-hidden="true">
+                <span>LINE</span>
+                <span>TIME</span>
+                <span>LVL</span>
+                <span>PID/TID</span>
+                <span>COMPONENT</span>
+                <span>MESSAGE</span>
+              </div>
               <div id="filtered-log-grid" class="log-grid" tabindex="0" aria-label="Filtered log lines">
-                <div class="grid-head grid-row">
-                  <span>LINE</span>
-                  <span>TIME</span>
-                  <span>LVL</span>
-                  <span>PID/TID</span>
-                  <span>COMPONENT</span>
-                  <span>MESSAGE</span>
-                </div>
                 <div id="filtered-grid-spacer"></div>
                 <div id="filtered-grid-rows"></div>
                 <p id="filtered-empty-state" class="empty-state">Paste logcat text or load a log file to begin.</p>

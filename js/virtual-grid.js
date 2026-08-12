@@ -1,21 +1,65 @@
+/**
+ * VirtualGrid — high-performance virtual-scroll log table.
+ *
+ * Architecture:
+ *   .grid-card-inner  (flex column, overflow hidden)
+ *     .grid-head      (sticky header, flex-shrink 0, outside scroll)
+ *     .log-grid       (scroll container, flex 1, overflow auto)
+ *       [spacer]      (invisible, sets total scroll height)
+ *       [rows]        (absolute, translated to visible window)
+ *       [empty-state] (shown when no records)
+ *
+ * The header lives OUTSIDE the scroll container so it never scrolls
+ * vertically, but the whole .grid-card-inner can scroll horizontally
+ * in sync because both header and log-grid share the same min-width.
+ */
+
 import { APP_CONFIG } from './config.js';
-const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+const escapeHtml = str => String(str ?? '').replace(/[&<>"']/g, c => ESCAPE_MAP[c]);
+
+/** Clone a regex and ensure the global flag is set (avoids lastIndex issues). */
+function toGlobalRegex(rule) {
+  if (rule.flags.includes('g')) return rule;
+  return new RegExp(rule.source, rule.flags + 'g');
+}
+
+// ---------------------------------------------------------------------------
+// VirtualGrid class
+// ---------------------------------------------------------------------------
 
 export class VirtualGrid {
-  constructor(container, onSelect = () => {}) {
-    this.container = container;
-    this.spacer = container.querySelector('#grid-spacer') || container.querySelector('[id*="grid-spacer"]');
-    this.rows = container.querySelector('#grid-rows') || container.querySelector('[id*="grid-rows"]');
-    this.empty = container.querySelector('#empty-state') || container.querySelector('[id*="empty-state"]');
-    this.records = [];
-    this.highlights = [];
-    this.onSelect = onSelect;
-    this.selectedLine = null;
-    this.frame = 0;
+  /**
+   * @param {HTMLElement} scrollContainer  — The `.log-grid` element (overflow:auto)
+   * @param {function}    onSelect         — Called with a record when a row is clicked
+   */
+  constructor(scrollContainer, onSelect = () => {}) {
+    if (!scrollContainer) throw new Error('VirtualGrid: scrollContainer is required');
 
-    container?.addEventListener('scroll', () => this.schedule());
-    this.rows?.addEventListener('click', event => {
-      const row = event.target.closest('[data-index]');
+    this.container = scrollContainer;
+
+    // Locate internal elements by id suffix pattern so multiple grids can coexist
+    this.spacer = scrollContainer.querySelector('[id$="grid-spacer"]');
+    this.rows   = scrollContainer.querySelector('[id$="grid-rows"]');
+    this.empty  = scrollContainer.querySelector('[id$="empty-state"]');
+
+    this.records          = [];
+    this.filterHighlights = [];   // cyan — from search/filter tags
+    this.patternHighlights = [];  // gold — from the Highlight section
+    this.selectedLine     = null;
+    this._frame           = 0;    // rAF handle
+
+    // Re-render on scroll
+    scrollContainer.addEventListener('scroll', () => this.schedule());
+
+    // Row click → select
+    this.rows?.addEventListener('click', e => {
+      const row = e.target.closest('[data-index]');
       if (!row) return;
       const record = this.records[Number(row.dataset.index)];
       if (record) {
@@ -24,128 +68,184 @@ export class VirtualGrid {
         this.schedule();
       }
     });
+
+    this.onSelect = onSelect;
   }
 
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  /** Replace the displayed records and reset scroll position. */
   setRecords(records) {
-    this.records = records || [];
+    this.records = records ?? [];
     this.selectedLine = null;
-    if (this.spacer) this.spacer.style.height = `${this.records.length * APP_CONFIG.rowHeight}px`;
-    if (this.container?.parentElement) {
-      this.container.parentElement.style.setProperty('--grid-width', `${this.estimateWidth(this.records)}px`);
+
+    // Update virtual scroll height
+    if (this.spacer) {
+      this.spacer.style.height = `${this.records.length * APP_CONFIG.rowHeight}px`;
     }
-    if (this.container) this.container.scrollTop = 0;
+
+    // Update CSS variable used by header + rows for min-width
+    const width = this._estimateWidth(this.records);
+    this.container.style.setProperty('--grid-width', `${width}px`);
+
+    // Reset scroll to top
+    this.container.scrollTop = 0;
+
     this.schedule();
   }
 
+  /**
+   * Set highlights for both categories.
+   * @param {RegExp[]} filterHighlights  — Search/filter matches (cyan)
+   * @param {RegExp[]} patternHighlights — Pattern/highlight matches (gold)
+   */
   setHighlights(filterHighlights = [], patternHighlights = []) {
-    if (Array.isArray(filterHighlights)) {
-      this.filterHighlights = filterHighlights;
-      this.patternHighlights = patternHighlights;
-    } else {
-      this.filterHighlights = filterHighlights.filter || [];
-      this.patternHighlights = filterHighlights.pattern || [];
+    this.filterHighlights  = filterHighlights;
+    this.patternHighlights = patternHighlights;
+    this.schedule();
+  }
+
+  /** Scroll so that the row with this line number is visible. */
+  scrollToLine(lineNumber) {
+    const index = this.records.findIndex(r => r.line === lineNumber);
+    if (index < 0) return;
+    const targetScrollTop = index * APP_CONFIG.rowHeight;
+    const { scrollTop, clientHeight } = this.container;
+    const isVisible = targetScrollTop >= scrollTop && targetScrollTop + APP_CONFIG.rowHeight <= scrollTop + clientHeight;
+    if (!isVisible) {
+      this.container.scrollTop = Math.max(0, targetScrollTop - clientHeight / 2);
     }
     this.schedule();
   }
 
+  /** Request an animation-frame render (debounced so only 1 rAF queued at a time). */
   schedule() {
-    if (!this.frame) {
-      this.frame = requestAnimationFrame(() => {
-        this.frame = 0;
-        this.render();
+    if (!this._frame) {
+      this._frame = requestAnimationFrame(() => {
+        this._frame = 0;
+        this._render();
       });
     }
   }
 
-  render() {
+  // ---------------------------------------------------------------------------
+  // Private — rendering
+  // ---------------------------------------------------------------------------
+
+  _render() {
     const count = this.records.length;
-    if (this.empty) this.empty.hidden = Boolean(count);
+
+    // Show/hide empty-state placeholder
+    if (this.empty) this.empty.hidden = count > 0;
+
     if (!count) {
-      if (this.rows) this.rows.replaceChildren();
+      if (this.rows) this.rows.innerHTML = '';
       return;
     }
 
-    const scrollTop = this.container ? this.container.scrollTop : 0;
-    const clientHeight = this.container ? this.container.clientHeight : 400;
+    const { scrollTop, clientHeight } = this.container;
+    const overscan = APP_CONFIG.renderOverscan;
+    const rowH     = APP_CONFIG.rowHeight;
 
-    const start = Math.max(0, Math.floor(scrollTop / APP_CONFIG.rowHeight) - APP_CONFIG.renderOverscan);
-    const visible = Math.ceil(clientHeight / APP_CONFIG.rowHeight) + APP_CONFIG.renderOverscan * 2;
-    const end = Math.min(count, start + visible);
+    const start = Math.max(0, Math.floor(scrollTop / rowH) - overscan);
+    const end   = Math.min(count, start + Math.ceil(clientHeight / rowH) + overscan * 2);
 
-    if (this.rows) this.rows.style.transform = `translateY(${start * APP_CONFIG.rowHeight}px)`;
+    // Translate the rows div to align with the visible window
+    if (this.rows) {
+      this.rows.style.transform = `translateY(${start * rowH}px)`;
+    }
 
+    // Build HTML for the visible slice
     let html = '';
     for (let i = start; i < end; i++) {
-      const r = this.records[i];
-      const [date = '', time = ''] = (r.timestamp || '').split(' ');
-      const [pid = '', tid = ''] = (r.pidTid || '').split('/');
-
-      html += `<div data-index="${i}" class="log-row grid-row${r.line === this.selectedLine ? ' is-selected' : ''}" title="${escapeHtml(r.raw)}">` +
-        `<span class="line-number">${r.line}</span>` +
-        `<span class="timestamp"><em>${this.highlight(date)}</em> <strong>${this.highlight(time)}</strong></span>` +
-        `<span class="level-${r.level}">${r.level}</span>` +
-        `<span class="pid pid-${this.pidColor(pid)}">${this.highlight(pid)}<i>${tid ? `/${this.highlight(tid)}` : ''}</i></span>` +
-        `<span class="component">${this.highlight(r.component)}</span>` +
-        `<span class="message">${this.highlight(r.message)}</span>` +
-        `</div>`;
+      html += this._renderRow(this.records[i], i);
     }
+
     if (this.rows) this.rows.innerHTML = html;
   }
 
-  highlight(value) {
+  _renderRow(r, index) {
+    const [date = '', time = ''] = (r.timestamp ?? '').split(' ');
+    const [pid  = '', tid  = ''] = (r.pidTid    ?? '').split('/');
+    const selected = r.line === this.selectedLine ? ' is-selected' : '';
+
+    return (
+      `<div data-index="${index}" class="log-row grid-row${selected}" title="${escapeHtml(r.raw)}">` +
+        `<span class="line-number">${r.line}</span>` +
+        `<span class="timestamp"><em>${this._hl(date)}</em> <strong>${this._hl(time)}</strong></span>` +
+        `<span class="level-${r.level ?? '?'}">${r.level ?? '?'}</span>` +
+        `<span class="pid pid-${this._pidColor(pid)}">${this._hl(pid)}<i>${tid ? `/${this._hl(tid)}` : ''}</i></span>` +
+        `<span class="component">${this._hl(r.component)}</span>` +
+        `<span class="message">${this._hl(r.message)}</span>` +
+      `</div>`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — highlighting
+  // ---------------------------------------------------------------------------
+
+  _hl(value) {
     const text = String(value ?? '');
-    if (!text) return escapeHtml(text);
+    if (!text) return '';
 
-    const matches = [];
-
-    for (const rule of (this.filterHighlights || [])) {
-      if (!rule) continue;
-      const regex = rule.global ? rule : new RegExp(rule.source, `${rule.flags}g`);
-      regex.lastIndex = 0;
-      let match;
-      while ((match = regex.exec(text))) {
-        if (!match[0]) break;
-        matches.push({ from: match.index, to: match.index + match[0].length, type: 'filter' });
-      }
-    }
-
-    for (const rule of (this.patternHighlights || [])) {
-      if (!rule) continue;
-      const regex = rule.global ? rule : new RegExp(rule.source, `${rule.flags}g`);
-      regex.lastIndex = 0;
-      let match;
-      while ((match = regex.exec(text))) {
-        if (!match[0]) break;
-        matches.push({ from: match.index, to: match.index + match[0].length, type: 'pattern' });
-      }
-    }
+    // Collect all match ranges from both highlight categories
+    const matches = [
+      ...this._findMatches(text, this.filterHighlights,  'filter'),
+      ...this._findMatches(text, this.patternHighlights, 'pattern'),
+    ];
 
     if (!matches.length) return escapeHtml(text);
 
+    // Sort by start position, then by longest match first
     matches.sort((a, b) => a.from - b.from || b.to - a.to);
-    let output = '', cursor = 0;
+
+    // Build highlighted HTML, skipping overlapping ranges
+    let out = '';
+    let cursor = 0;
     for (const { from, to, type } of matches) {
       if (from < cursor) continue;
       const cls = type === 'filter' ? 'filter-highlight' : 'pattern-highlight';
-      output += escapeHtml(text.slice(cursor, from)) + `<mark class="${cls}">${escapeHtml(text.slice(from, to))}</mark>`;
+      out += escapeHtml(text.slice(cursor, from)) +
+             `<mark class="${cls}">${escapeHtml(text.slice(from, to))}</mark>`;
       cursor = to;
     }
-    return output + escapeHtml(text.slice(cursor));
+    return out + escapeHtml(text.slice(cursor));
   }
 
-  pidColor(pid) {
+  _findMatches(text, rules, type) {
+    const matches = [];
+    for (const rule of rules) {
+      if (!rule) continue;
+      const re = toGlobalRegex(rule);
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        if (!m[0]) break; // guard against zero-length matches causing infinite loop
+        matches.push({ from: m.index, to: m.index + m[0].length, type });
+      }
+    }
+    return matches;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — utilities
+  // ---------------------------------------------------------------------------
+
+  _pidColor(pid) {
     let hash = 0;
-    for (const char of String(pid)) hash = ((hash * 31) + char.charCodeAt(0)) | 0;
+    for (const ch of String(pid)) hash = ((hash * 31) + ch.charCodeAt(0)) | 0;
     return Math.abs(hash) % 8;
   }
 
-  estimateWidth(records) {
+  _estimateWidth(records) {
     let longest = 0;
-    for (const record of records) {
-      if (record.message) longest = Math.max(longest, record.message.length);
+    for (const r of records) {
+      if (r.message) longest = Math.max(longest, r.message.length);
     }
-    return Math.min(200000, Math.max(900, 720 + longest * 7.2));
+    // 720px base + ~7.2px per character, clamped
+    return Math.min(200_000, Math.max(1100, 720 + longest * 7.2));
   }
 }
-
-

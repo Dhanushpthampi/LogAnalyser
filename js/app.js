@@ -1,49 +1,125 @@
-import { APP_CONFIG } from './config.js';
-import { parseLine } from './parser.js';
-import { streamLines } from './stream-reader.js';
-import { LogStore } from './log-store.js';
+/**
+ * app.js — Logalizer main application controller.
+ *
+ * Responsibilities:
+ *  - Owns application state (filters, highlights, top-pane view)
+ *  - Manages log ingestion from file upload or textarea paste
+ *  - Drives two VirtualGrid instances (all-retained and filtered)
+ *  - Wires all UI events (sidebar, tabs, search, highlights, library)
+ */
+
+import { APP_CONFIG }               from './config.js';
+import { parseLine }                 from './parser.js';
+import { streamLines }               from './stream-reader.js';
+import { LogStore }                  from './log-store.js';
 import { compileSearch, filterRecords } from './filter-engine.js';
-import { VirtualGrid } from './virtual-grid.js';
-import { LogLibrary } from './log-library.js';
+import { VirtualGrid }               from './virtual-grid.js';
+import { LogLibrary }                from './log-library.js';
+
+// ---------------------------------------------------------------------------
+// Singletons
+// ---------------------------------------------------------------------------
 
 const $ = id => document.getElementById(id);
-const store = new LogStore();
+
+const store            = new LogStore();
 const repositoryClasses = new Set();
-const library = new LogLibrary();
+const library          = new LogLibrary();
 
-const allGrid = new VirtualGrid($('all-log-grid'), selectRawLine);
-const filteredGrid = new VirtualGrid($('filtered-log-grid'), selectRawLine);
+const allGrid      = new VirtualGrid($('all-log-grid'),      onRowSelect);
+const filteredGrid = new VirtualGrid($('filtered-log-grid'), onRowSelect);
 
-let controller = null;
-let filterTimer = 0;
-let editorFrame = 0;
+// ---------------------------------------------------------------------------
+// Application state
+// ---------------------------------------------------------------------------
 
 const state = {
-  topView: 'raw',
+  topView:      'raw',   // 'raw' | 'all'
   invertSearch: false,
   caseSensitive: false,
-  level: '',
-  searchTags: [],
-  highlights: [],
-  domains: { storage: false, media: false, scanner: false, errors: false, repository: false }
+  level:        '',
+  searchTags:   [],      // { id, label, global, regex, enabled }[]
+  highlights:   [],      // { id, label, global, regex, enabled }[]
 };
+
+// ---------------------------------------------------------------------------
+// Timers / frame handles
+// ---------------------------------------------------------------------------
+
+let abortController = null;  // for cancelling streaming imports
+let filterTimer     = 0;     // debounce timeout for filter changes
+let editorFrame     = 0;     // rAF handle for editor parse scheduling
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
 
 function setStatus(text, mode = 'idle') {
   const el = $('status');
-  if (el) {
-    el.textContent = text;
-    el.className = `status status--${mode}`;
-  }
+  if (!el) return;
+  el.textContent = text;
+  el.className = `status status--${mode}`;
 }
 
-function updateMetrics(shown = filteredGrid.records.length) {
-  if ($('read-count')) $('read-count').textContent = store.totalRead.toLocaleString();
+// ---------------------------------------------------------------------------
+// Metrics (tab badges + read/shown counts)
+// ---------------------------------------------------------------------------
+
+function updateMetrics() {
+  const shown = filteredGrid.records.length;
+  if ($('filtered-tab-count')) $('filtered-tab-count').textContent = shown.toLocaleString();
+  if ($('all-tab-count'))      $('all-tab-count').textContent      = store.lines.length.toLocaleString();
+  // Legacy metric elements — safe no-ops if not in DOM
+  if ($('read-count'))    $('read-count').textContent    = store.totalRead.toLocaleString();
   if ($('retained-count')) $('retained-count').textContent = store.lines.length.toLocaleString();
-  if ($('shown-count')) $('shown-count').textContent = shown.toLocaleString();
-  if ($('format')) $('format').textContent = [...store.formats].filter(x => x !== 'UNKNOWN').join(' + ') || 'Detecting...';
-  if ($('repo-count')) $('repo-count').textContent = repositoryClasses.size.toLocaleString();
-  if ($('filtered-tab-count')) $('filtered-tab-count').textContent = state.filteredCount?.toLocaleString() || '0';
-  if ($('all-tab-count')) $('all-tab-count').textContent = store.lines.length.toLocaleString();
+  if ($('shown-count'))   $('shown-count').textContent   = shown.toLocaleString();
+  if ($('format'))        $('format').textContent        = [...store.formats].filter(f => f !== 'UNKNOWN').join(' + ') || '—';
+  if ($('repo-count'))    $('repo-count').textContent    = repositoryClasses.size.toLocaleString();
+}
+
+// ---------------------------------------------------------------------------
+// Highlight helpers
+// ---------------------------------------------------------------------------
+
+function buildHighlightRegexes() {
+  const filterRxs  = state.searchTags.filter(r => r.enabled).map(r => r.regex);
+  const patternRxs = state.highlights.filter(r => r.enabled).map(r => r.regex);
+
+  // Include the live search input as a transient filter highlight
+  const liveText = $('search')?.value.trim() ?? '';
+  if (liveText) {
+    const { regex } = compileSearch(liveText, state.caseSensitive);
+    if (regex) filterRxs.push(regex);
+  }
+
+  return { filterRxs, patternRxs };
+}
+
+function pushHighlightsToGrids() {
+  const { filterRxs, patternRxs } = buildHighlightRegexes();
+  allGrid.setHighlights(filterRxs, patternRxs);
+  filteredGrid.setHighlights(filterRxs, patternRxs);
+}
+
+// ---------------------------------------------------------------------------
+// Core view update
+// ---------------------------------------------------------------------------
+
+function applyView() {
+  const liveQuery = $('search')?.value ?? '';
+  const filtered  = filterRecords(store.lines, state, repositoryClasses, liveQuery);
+
+  allGrid.setRecords(store.lines);
+  filteredGrid.setRecords(filtered);
+
+  pushHighlightsToGrids();
+  updateMetrics();
+
+  if (store.lines.length) {
+    setStatus(
+      `${filtered.length.toLocaleString()} matching of ${store.lines.length.toLocaleString()} retained lines`
+    );
+  }
 }
 
 function scheduleFilter() {
@@ -51,55 +127,33 @@ function scheduleFilter() {
   filterTimer = setTimeout(applyView, APP_CONFIG.filterDebounceMs);
 }
 
-function updateGridHighlights() {
-  const filterHighlights = state.searchTags.filter(rule => rule.enabled).map(rule => rule.regex);
-  const patternHighlights = state.highlights.filter(rule => rule.enabled).map(rule => rule.regex);
-  const liveVal = $('search')?.value?.trim();
-  if (liveVal) {
-    const { regex } = compileSearch(liveVal, state.caseSensitive);
-    if (regex) filterHighlights.push(regex);
-  }
-  allGrid.setHighlights(filterHighlights, patternHighlights);
-  filteredGrid.setHighlights(filterHighlights, patternHighlights);
-}
-
-function applyView() {
-  const liveQuery = $('search')?.value || '';
-  const filtered = filterRecords(store.lines, state, repositoryClasses, liveQuery);
-  state.filteredCount = filtered.length;
-
-  allGrid.setRecords(store.lines);
-  filteredGrid.setRecords(filtered);
-
-  updateGridHighlights();
-  updateMetrics();
-
-  if (store.lines.length) {
-    setStatus(`${filtered.length.toLocaleString()} matching lines out of ${store.lines.length.toLocaleString()} total`);
-  }
-}
+// ---------------------------------------------------------------------------
+// Raw editor
+// ---------------------------------------------------------------------------
 
 function parseEditorText() {
-  const text = $('log-text')?.value || '';
-  controller?.abort();
+  const text = $('log-text')?.value ?? '';
+  abortController?.abort();
   store.clear();
 
   if (!text.trim()) {
     allGrid.setRecords([]);
     filteredGrid.setRecords([]);
-    updateMetrics(0);
+    updateMetrics();
     setStatus('Raw Log Editor is empty');
     return;
   }
 
-  const lines = text.split(/\r?\n/);
-  store.append(
-    lines
-      .filter((line, index) => line || index < lines.length - 1)
-      .map((raw, index) => parseLine(raw, index + 1))
-  );
+  const rawLines = text.split(/\r?\n/);
+  const parsed   = rawLines
+    .filter((line, i) => line || i < rawLines.length - 1)   // keep all except trailing empty
+    .map((raw, i) => parseLine(raw, i + 1));
 
-  if ($('editor-mode')) $('editor-mode').textContent = `Live editor: ${store.totalRead.toLocaleString()} lines parsed.`;
+  store.append(parsed);
+
+  const editorMode = $('editor-mode');
+  if (editorMode) editorMode.textContent = `Live editor — ${store.totalRead.toLocaleString()} lines parsed`;
+
   applyView();
 }
 
@@ -111,57 +165,71 @@ function scheduleEditorParse() {
   });
 }
 
-function selectRawLine(record) {
-  // If user is currently looking at "All Retained Lines" in top pane, switch back to Raw Editor so line selection works
+// ---------------------------------------------------------------------------
+// Row selection — jump to raw editor line
+// ---------------------------------------------------------------------------
+
+function onRowSelect(record) {
+  // If user is on the "All Retained Lines" tab, switch back to Raw so they can see the line
   if (state.topView !== 'raw') {
-    state.topView = 'raw';
-    document.querySelectorAll('[data-top-view]').forEach(tab => tab.classList.toggle('is-active', tab.dataset.topView === 'raw'));
-    if ($('log-text')) $('log-text').hidden = false;
-    if ($('all-grid-card')) $('all-grid-card').hidden = true;
+    switchTopView('raw');
   }
 
   const editor = $('log-text');
-  if (!editor || !editor.value) {
-    setStatus(`Line ${record.line} selected. Raw file content is not available in the editor for streamed imports.`);
+  if (!editor?.value) {
+    setStatus(`Line ${record.line} selected (no raw text available for streamed imports)`);
     return;
   }
 
-  const lines = editor.value.split(/\n/);
+  const lines     = editor.value.split('\n');
   const lineIndex = Math.max(0, record.line - 1);
   if (lineIndex >= lines.length) return;
 
-  let start = 0;
-  for (let index = 0; index < lineIndex; index++) start += lines[index].length + 1;
-  const end = start + lines[lineIndex].replace(/\r$/, '').length;
+  // Calculate character offset of the target line
+  let charStart = 0;
+  for (let i = 0; i < lineIndex; i++) charStart += lines[i].length + 1;
+  const charEnd = charStart + lines[lineIndex].replace(/\r$/, '').length;
 
   editor.focus();
-  editor.setSelectionRange(start, end);
+  editor.setSelectionRange(charStart, charEnd);
   editor.scrollTop = Math.max(0, (lineIndex - 3) * 18);
   setStatus(`Selected raw line ${record.line}`);
 }
 
-async function loadLog(source, displayName = source.name || 'pasted logcat', save = true) {
-  controller?.abort();
-  controller = new AbortController();
+// ---------------------------------------------------------------------------
+// File / stream import
+// ---------------------------------------------------------------------------
+
+async function loadLog(source, displayName = source.name ?? 'pasted logcat', save = true) {
+  abortController?.abort();
+  abortController = new AbortController();
+
   store.clear();
   allGrid.setRecords([]);
   filteredGrid.setRecords([]);
-  updateMetrics(0);
+  updateMetrics();
 
-  if ($('editor-mode')) $('editor-mode').textContent = `Loading ${displayName}...`;
-  setStatus(`Reading ${displayName}...`, 'loading');
+  const editorMode = $('editor-mode');
+  if (editorMode) editorMode.textContent = `Loading ${displayName}…`;
+  setStatus(`Reading ${displayName}…`, 'loading');
 
-  let nextLine = 1;
+  let nextLineNumber = 1;
+
   try {
     await streamLines(
       source,
-      async lines => {
-        store.append(lines.map(raw => parseLine(raw, nextLine++)));
+      async chunk => {
+        store.append(chunk.map(raw => parseLine(raw, nextLineNumber++)));
         updateMetrics();
         await new Promise(requestAnimationFrame);
       },
-      (done, total) => setStatus(`Reading ${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`, 'loading'),
-      controller.signal
+      (bytesRead, totalBytes) => {
+        setStatus(
+          `Reading ${(bytesRead / 1_048_576).toFixed(1)} / ${(totalBytes / 1_048_576).toFixed(1)} MB`,
+          'loading'
+        );
+      },
+      abortController.signal
     );
 
     applyView();
@@ -170,28 +238,68 @@ async function loadLog(source, displayName = source.name || 'pasted logcat', sav
       try {
         await library.save(displayName, source);
         await renderLibrary();
-      } catch (error) {
-        setStatus(`Imported, but local save failed: ${error.message}`, 'error');
+      } catch (err) {
+        setStatus(`Imported OK but local save failed: ${err.message}`, 'error');
         return;
       }
     }
 
-    const notice = store.dropped ? ` - kept newest ${APP_CONFIG.maxRetainedLines.toLocaleString()} lines` : '';
-    setStatus(`Import complete: ${store.totalRead.toLocaleString()} lines${notice}`);
-  } catch (error) {
-    if (error.name !== 'AbortError') {
-      console.error(error);
-      setStatus(`Import failed: ${error.message}`, 'error');
+    const dropNotice = store.dropped
+      ? ` (kept newest ${APP_CONFIG.maxRetainedLines.toLocaleString()} lines)`
+      : '';
+    setStatus(`Import complete — ${store.totalRead.toLocaleString()} lines${dropNotice}`);
+
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.error('[Logalizer] import failed:', err);
+      setStatus(`Import failed: ${err.message}`, 'error');
     }
   }
 }
 
+// ---------------------------------------------------------------------------
+// Repository map
+// ---------------------------------------------------------------------------
+
+function loadRepositoryText(jsonText) {
+  try {
+    const payload = JSON.parse(jsonText);
+    const values  = Array.isArray(payload)
+      ? payload
+      : (payload.classes ?? payload.classNames ?? []);
+
+    if (!Array.isArray(values)) throw new TypeError('Expected a JSON array of class name strings');
+
+    repositoryClasses.clear();
+    values
+      .filter(v => typeof v === 'string')
+      .map(v => v.trim())
+      .filter(Boolean)
+      .forEach(v => repositoryClasses.add(v));
+
+    updateMetrics();
+    setStatus(`Loaded ${repositoryClasses.size.toLocaleString()} repository class names`);
+    scheduleFilter();
+
+  } catch (err) {
+    setStatus(`Repository map error: ${err.message}`, 'error');
+  }
+}
+
+async function loadRepositoryFile(file) {
+  loadRepositoryText(await file.text());
+}
+
+// ---------------------------------------------------------------------------
+// Saved log library
+// ---------------------------------------------------------------------------
+
 async function renderLibrary() {
+  const container = $('saved-logs');
+  if (!container) return;
+
   try {
     const logs = await library.list();
-    const container = $('saved-logs');
-    if (!container) return;
-
     container.replaceChildren();
 
     if (!logs.length) {
@@ -203,71 +311,59 @@ async function renderLibrary() {
       const item = document.createElement('div');
       item.className = 'saved-log';
 
-      const open = document.createElement('button');
-      open.textContent = `${log.name} (${(log.size / 1048576).toFixed(1)} MB)`;
-      open.title = `Open ${log.name}`;
-      open.addEventListener('click', async () => {
+      // Open button
+      const openBtn = document.createElement('button');
+      openBtn.textContent = `${log.name} (${(log.size / 1_048_576).toFixed(1)} MB)`;
+      openBtn.title = `Open ${log.name}`;
+      openBtn.addEventListener('click', async () => {
         const record = await library.get(log.id);
         if (!record) return;
         try {
-          if ($('log-text')) $('log-text').value = await record.blob.text();
-          if ($('editor-mode')) $('editor-mode').textContent = `Saved log: ${record.name}. Edit it directly.`;
+          const editor = $('log-text');
+          if (editor) editor.value = await record.blob.text();
+          const modeEl = $('editor-mode');
+          if (modeEl) modeEl.textContent = `Saved log: ${record.name}`;
           parseEditorText();
-        } catch (error) {
-          setStatus(`Could not open saved log: ${error.message}`, 'error');
+        } catch (err) {
+          setStatus(`Could not open saved log: ${err.message}`, 'error');
         }
       });
 
-      const rename = document.createElement('button');
-      rename.className = 'rename-log';
-      rename.textContent = '✎';
-      rename.title = 'Rename';
-      rename.addEventListener('click', async () => {
-        const newName = prompt('Rename log to:', log.name);
-        if (!newName || !newName.trim() || newName.trim() === log.name) return;
-        await library.rename(log.id, newName.trim());
+      // Rename button
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'rename-log';
+      renameBtn.textContent = '✎';
+      renameBtn.title = 'Rename';
+      renameBtn.addEventListener('click', async () => {
+        const newName = prompt('Rename log to:', log.name)?.trim();
+        if (!newName || newName === log.name) return;
+        await library.rename(log.id, newName);
         renderLibrary();
       });
 
-      const remove = document.createElement('button');
-      remove.className = 'delete-log';
-      remove.textContent = '✕';
-      remove.title = 'Delete saved log';
-      remove.addEventListener('click', async () => {
+      // Delete button
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'delete-log';
+      deleteBtn.textContent = '✕';
+      deleteBtn.title = 'Delete';
+      deleteBtn.addEventListener('click', async () => {
+        if (!confirm(`Delete "${log.name}"?`)) return;
         await library.remove(log.id);
         renderLibrary();
       });
 
-      item.append(open, rename, remove);
+      item.append(openBtn, renameBtn, deleteBtn);
       container.append(item);
     }
-  } catch (error) {
-    if ($('saved-logs')) $('saved-logs').innerHTML = '<p class="side-empty">Local library unavailable.</p>';
-    console.warn(error);
+  } catch (err) {
+    container.innerHTML = '<p class="side-empty">Local library unavailable.</p>';
+    console.warn('[Logalizer] library error:', err);
   }
 }
 
-function loadRepositoryText(text) {
-  try {
-    const payload = JSON.parse(text);
-    const values = Array.isArray(payload) ? payload : payload.classes || payload.classNames || [];
-
-    if (!Array.isArray(values)) throw new Error('Expected an array, or a classes/classNames array');
-
-    repositoryClasses.clear();
-    values.filter(v => typeof v === 'string').map(v => v.trim()).filter(Boolean).forEach(v => repositoryClasses.add(v));
-
-    updateMetrics();
-    setStatus(`Loaded ${repositoryClasses.size.toLocaleString()} repository class names`);
-    scheduleFilter();
-  } catch (error) {
-    setStatus(`Repository map failed: ${error.message}`, 'error');
-  }
-}
-
-async function loadRepository(file) {
-  loadRepositoryText(await file.text());
-}
+// ---------------------------------------------------------------------------
+// Filter chip list (search tags & highlight patterns)
+// ---------------------------------------------------------------------------
 
 function renderRuleList(listId, rules, onChange) {
   const list = $(listId);
@@ -275,259 +371,144 @@ function renderRuleList(listId, rules, onChange) {
 
   list.replaceChildren(
     ...rules.map(rule => {
-      const label = document.createElement('label');
-      label.className = 'filter-chip';
+      const chip = document.createElement('label');
+      chip.className = 'filter-chip';
 
-      const enabled = document.createElement('input');
-      enabled.type = 'checkbox';
-      enabled.checked = rule.enabled;
-      enabled.addEventListener('change', () => {
-        rule.enabled = enabled.checked;
+      const checkbox = document.createElement('input');
+      checkbox.type    = 'checkbox';
+      checkbox.checked = rule.enabled;
+      checkbox.addEventListener('change', () => {
+        rule.enabled = checkbox.checked;
         onChange();
       });
 
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.textContent = 'x';
-      remove.addEventListener('click', () => {
-        const index = rules.indexOf(rule);
-        if (index > -1) rules.splice(index, 1);
+      const removeBtn = document.createElement('button');
+      removeBtn.type        = 'button';
+      removeBtn.textContent = '✕';
+      removeBtn.title       = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        rules.splice(rules.indexOf(rule), 1);
         renderRuleList(listId, rules, onChange);
         onChange();
       });
 
-      label.append(enabled, document.createTextNode(` ${rule.label}`), remove);
-      return label;
+      chip.append(checkbox, ` ${rule.label}`, removeBtn);
+      return chip;
     })
   );
 }
 
-function addRule(inputId, rules, listId, onChange, global = false) {
-  const input = $(inputId);
-  if (!input) return;
-  const pattern = input.value.trim();
+function addRule(inputId, rules, listId, onChange, isGlobal = false) {
+  const input   = $(inputId);
+  const pattern = input?.value.trim();
   if (!pattern) return;
 
   try {
+    const flags = (state.caseSensitive ? '' : 'i') + (isGlobal ? 'g' : '');
     rules.push({
-      id: crypto.randomUUID(),
-      label: pattern,
-      global,
-      regex: new RegExp(pattern, `${state.caseSensitive ? '' : 'i'}${global ? 'g' : ''}`),
-      enabled: true
+      id:      crypto.randomUUID(),
+      label:   pattern,
+      global:  isGlobal,
+      regex:   new RegExp(pattern, flags),
+      enabled: true,
     });
-    input.value = '';
+    if (input) input.value = '';
     renderRuleList(listId, rules, onChange);
     onChange();
   } catch {
-    setStatus('Regex is not valid', 'error');
+    setStatus('Invalid regex — check the pattern syntax', 'error');
   }
 }
 
+/** Rebuild all rule regexes when case-sensitivity changes. */
 function rebuildRuleRegexes() {
   try {
     for (const rule of [...state.searchTags, ...state.highlights]) {
-      rule.regex = new RegExp(rule.label, `${state.caseSensitive ? '' : 'i'}${rule.global ? 'g' : ''}`);
+      const flags = (state.caseSensitive ? '' : 'i') + (rule.global ? 'g' : '');
+      rule.regex  = new RegExp(rule.label, flags);
     }
-    updateGridHighlights();
+    pushHighlightsToGrids();
     scheduleFilter();
   } catch {
-    setStatus('Regex is not valid', 'error');
+    setStatus('Regex rebuild failed — check patterns', 'error');
   }
 }
+
+// ---------------------------------------------------------------------------
+// Drag-and-drop helper
+// ---------------------------------------------------------------------------
 
 function wireDrop(id, callback) {
   const zone = $(id);
   if (!zone) return;
 
-  ['dragenter', 'dragover'].forEach(type =>
-    zone.addEventListener(type, event => {
-      event.preventDefault();
-      zone.classList.add('is-dragging');
-    })
-  );
-
-  ['dragleave', 'drop'].forEach(type =>
-    zone.addEventListener(type, event => {
-      event.preventDefault();
-      zone.classList.remove('is-dragging');
-    })
-  );
-
-  zone.addEventListener('drop', event => {
-    const file = event.dataTransfer.files[0];
+  zone.addEventListener('dragenter', e => { e.preventDefault(); zone.classList.add('is-dragging'); });
+  zone.addEventListener('dragover',  e => { e.preventDefault(); });
+  zone.addEventListener('dragleave', ()  => zone.classList.remove('is-dragging'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('is-dragging');
+    const file = e.dataTransfer.files[0];
     if (file) callback(file);
   });
 }
 
-// Sidebar toggle & resizer
-$('sidebar-toggle')?.addEventListener('click', () => {
-  document.querySelector('.workspace')?.classList.toggle('is-sidebar-collapsed');
-});
+// ---------------------------------------------------------------------------
+// Top-pane view switcher (Raw Editor ↔ All Retained Lines)
+// ---------------------------------------------------------------------------
 
-$('sidebar-resizer')?.addEventListener('pointerdown', event => {
-  const workspace = document.querySelector('.workspace');
-  if (workspace?.classList.contains('is-sidebar-collapsed')) return;
+function switchTopView(view) {
+  state.topView = view;
+  const isRaw = view === 'raw';
 
-  const startX = event.clientX;
-  const startWidth = $('sidebar').getBoundingClientRect().width;
-
-  const resize = move => workspace.style.setProperty('--sidebar-width', `${Math.min(560, Math.max(230, startWidth + move.clientX - startX))}px`);
-  const stop = () => {
-    window.removeEventListener('pointermove', resize);
-    window.removeEventListener('pointerup', stop);
-  };
-
-  window.addEventListener('pointermove', resize);
-  window.addEventListener('pointerup', stop);
-});
-
-// Horizontal resizer divider between top pane and bottom pane
-$('panel-resizer')?.addEventListener('pointerdown', event => {
-  const panel = document.querySelector('.analysis-panel');
-  const startY = event.clientY;
-  const startHeight = document.querySelector('.top-pane-card').getBoundingClientRect().height;
-
-  const resize = move => panel.style.setProperty('--editor-height', `${Math.min(window.innerHeight - 230, Math.max(120, startHeight + move.clientY - startY))}px`);
-  const stop = () => {
-    window.removeEventListener('pointermove', resize);
-    window.removeEventListener('pointerup', stop);
-  };
-
-  window.addEventListener('pointermove', resize);
-  window.addEventListener('pointerup', stop);
-});
-
-// Fullscreen buttons
-document.querySelectorAll('.pane-fullscreen').forEach(button => {
-  button.addEventListener('click', () => {
-    const targetClass = button.dataset.fullscreen;
-    const targetEl = document.querySelector(`.${targetClass}`);
-    if (targetEl) {
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.();
-      } else {
-        targetEl.requestFullscreen?.();
-      }
-    }
+  document.querySelectorAll('[data-top-view]').forEach(tab => {
+    tab.classList.toggle('is-active', tab.dataset.topView === view);
   });
-});
 
-// File inputs & drag-drop
-$('log-file')?.addEventListener('change', event => event.target.files[0] && loadLog(event.target.files[0]));
-$('repo-file')?.addEventListener('change', event => event.target.files[0] && loadRepository(event.target.files[0]));
-wireDrop('log-drop-zone', loadLog);
-wireDrop('repo-drop-zone', loadRepository);
+  if ($('log-text'))     $('log-text').hidden     = !isRaw;
+  if ($('all-grid-card')) $('all-grid-card').hidden = isRaw;
 
-// Text editor & repo text inputs
-$('log-text')?.addEventListener('input', scheduleEditorParse);
-$('editor-clear')?.addEventListener('click', () => {
-  if ($('log-text')) $('log-text').value = '';
-  scheduleEditorParse();
-});
+  // Trigger a render pass when switching to the grid view
+  if (!isRaw) allGrid.schedule();
+}
 
-$('import-repo-text')?.addEventListener('click', () => {
-  const text = $('repo-text')?.value || '';
-  if (!text.trim()) return setStatus('Paste repository JSON first', 'error');
-  loadRepositoryText(text);
-});
+// ---------------------------------------------------------------------------
+// Full reset
+// ---------------------------------------------------------------------------
 
-// Search & filter inputs
-$('add-search-tag')?.addEventListener('click', () => addRule('search', state.searchTags, 'search-tag-list', scheduleFilter));
-$('search')?.addEventListener('keydown', event => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    addRule('search', state.searchTags, 'search-tag-list', scheduleFilter);
-  }
-});
-$('search')?.addEventListener('input', scheduleFilter);
-
-// Highlight inputs
-$('add-highlight')?.addEventListener('click', () => addRule('highlight-pattern', state.highlights, 'highlight-list', updateGridHighlights, true));
-$('highlight-pattern')?.addEventListener('keydown', event => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    addRule('highlight-pattern', state.highlights, 'highlight-list', updateGridHighlights, true);
-  }
-});
-
-// Toggles & options
-$('invert-search')?.addEventListener('change', event => {
-  state.invertSearch = event.target.checked;
-  scheduleFilter();
-});
-$('case-sensitive')?.addEventListener('change', event => {
-  state.caseSensitive = event.target.checked;
-  rebuildRuleRegexes();
-});
-$('level-filter')?.addEventListener('change', event => {
-  state.level = event.target.value;
-  scheduleFilter();
-});
-
-// Domain toggles
-document.querySelectorAll('[data-domain]').forEach(checkbox => {
-  checkbox.addEventListener('change', event => {
-    const domain = event.target.dataset.domain;
-    if (domain) {
-      state.domains[domain] = event.target.checked;
-      scheduleFilter();
-    }
-  });
-});
-
-// Top pane view tabs (Raw Log Editor vs All Retained Lines)
-document.querySelectorAll('[data-top-view]').forEach(tab => {
-  tab.addEventListener('click', () => {
-    state.topView = tab.dataset.topView;
-    document.querySelectorAll('[data-top-view]').forEach(item => item.classList.toggle('is-active', item === tab));
-    const isRaw = state.topView === 'raw';
-    if ($('log-text')) $('log-text').hidden = !isRaw;
-    if ($('all-grid-card')) $('all-grid-card').hidden = isRaw;
-    if (!isRaw) allGrid.schedule();
-  });
-});
-
-// Saved log library toggle
-$('library-toggle')?.addEventListener('click', () => {
-  const content = $('library-content');
-  if (!content) return;
-  const open = content.hidden;
-  content.hidden = !open;
-  const span = $('library-toggle').querySelector('span');
-  if (span) span.textContent = open ? '−' : '+';
-});
-
-// Clear analysis
-$('clear')?.addEventListener('click', () => {
-  controller?.abort();
+function clearAll() {
+  abortController?.abort();
   store.clear();
   repositoryClasses.clear();
 
+  // Reset all checkboxes except auto-save
   document.querySelectorAll('input[type=checkbox]').forEach(el => {
     if (el.id !== 'auto-save') el.checked = false;
   });
 
-  if ($('search')) $('search').value = '';
+  // Clear text inputs
+  ['search', 'highlight-pattern', 'repo-text'].forEach(id => {
+    const el = $(id);
+    if (el) el.value = '';
+  });
+  const logText = $('log-text');
+  if (logText) logText.value = '';
   if ($('level-filter')) $('level-filter').value = '';
-  if ($('log-text')) $('log-text').value = '';
-  if ($('repo-text')) $('repo-text').value = '';
-  if ($('highlight-pattern')) $('highlight-pattern').value = '';
-  if ($('editor-mode')) $('editor-mode').textContent = 'Paste logcat here; changes are parsed automatically.';
+  const editorMode = $('editor-mode');
+  if (editorMode) editorMode.textContent = 'Paste logcat here — changes are parsed automatically';
 
-  state.invertSearch = false;
+  // Reset state
+  state.topView       = 'raw';
+  state.invertSearch  = false;
   state.caseSensitive = false;
-  state.level = '';
-  state.topView = 'raw';
-  state.searchTags = [];
-  state.highlights = [];
+  state.level         = '';
+  state.searchTags    = [];
+  state.highlights    = [];
 
-  document.querySelectorAll('[data-top-view]').forEach(item => item.classList.toggle('is-active', item.dataset.topView === 'raw'));
-  if ($('log-text')) $('log-text').hidden = false;
-  if ($('all-grid-card')) $('all-grid-card').hidden = true;
+  switchTopView('raw');
 
-  renderRuleList('search-tag-list', state.searchTags, scheduleFilter);
-  renderRuleList('highlight-list', state.highlights, updateGridHighlights);
+  renderRuleList('search-tag-list', state.searchTags,  scheduleFilter);
+  renderRuleList('highlight-list',  state.highlights,  pushHighlightsToGrids);
 
   allGrid.setHighlights([], []);
   allGrid.setRecords([]);
@@ -536,8 +517,145 @@ $('clear')?.addEventListener('click', () => {
 
   updateMetrics();
   setStatus('Ready for a log file');
+}
+
+// ===========================================================================
+// UI event wiring
+// ===========================================================================
+
+// --- Sidebar toggle & resizer ---
+$('sidebar-toggle')?.addEventListener('click', () => {
+  document.querySelector('.workspace')?.classList.toggle('is-sidebar-collapsed');
 });
 
+$('sidebar-resizer')?.addEventListener('pointerdown', e => {
+  const workspace = document.querySelector('.workspace');
+  if (!workspace || workspace.classList.contains('is-sidebar-collapsed')) return;
+
+  const startX     = e.clientX;
+  const startWidth = $('sidebar').getBoundingClientRect().width;
+
+  const onMove = ev => {
+    const newWidth = Math.min(560, Math.max(230, startWidth + ev.clientX - startX));
+    workspace.style.setProperty('--sidebar-width', `${newWidth}px`);
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup',   onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup',   onUp);
+});
+
+// --- Vertical panel resizer (top ↔ bottom pane) ---
+$('panel-resizer')?.addEventListener('pointerdown', e => {
+  const panel      = document.querySelector('.analysis-panel');
+  const topCard    = document.querySelector('.top-pane-card');
+  if (!panel || !topCard) return;
+
+  const startY     = e.clientY;
+  const startHeight = topCard.getBoundingClientRect().height;
+
+  const onMove = ev => {
+    const newHeight = Math.min(
+      window.innerHeight - 230,
+      Math.max(120, startHeight + ev.clientY - startY)
+    );
+    panel.style.setProperty('--editor-height', `${newHeight}px`);
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup',   onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup',   onUp);
+});
+
+// --- Fullscreen buttons ---
+document.querySelectorAll('.pane-fullscreen').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = document.querySelector(`.${btn.dataset.fullscreen}`);
+    if (!target) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      target.requestFullscreen?.();
+    }
+  });
+});
+
+// --- File import ---
+$('log-file')?.addEventListener('change', e => { if (e.target.files[0]) loadLog(e.target.files[0]); });
+$('repo-file')?.addEventListener('change', e => { if (e.target.files[0]) loadRepositoryFile(e.target.files[0]); });
+wireDrop('log-drop-zone',  loadLog);
+wireDrop('repo-drop-zone', loadRepositoryFile);
+
+// --- Textarea editor ---
+$('log-text')?.addEventListener('input', scheduleEditorParse);
+
+// --- Repository map text ---
+$('import-repo-text')?.addEventListener('click', () => {
+  const text = $('repo-text')?.value ?? '';
+  if (!text.trim()) { setStatus('Paste repository JSON first', 'error'); return; }
+  loadRepositoryText(text);
+});
+
+// --- Search ---
+$('add-search-tag')?.addEventListener('click', () =>
+  addRule('search', state.searchTags, 'search-tag-list', scheduleFilter)
+);
+$('search')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addRule('search', state.searchTags, 'search-tag-list', scheduleFilter);
+  }
+});
+$('search')?.addEventListener('input', scheduleFilter);
+
+// --- Highlights ---
+$('add-highlight')?.addEventListener('click', () =>
+  addRule('highlight-pattern', state.highlights, 'highlight-list', pushHighlightsToGrids, true)
+);
+$('highlight-pattern')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addRule('highlight-pattern', state.highlights, 'highlight-list', pushHighlightsToGrids, true);
+  }
+});
+
+// --- Filter toggles ---
+$('invert-search')?.addEventListener('change', e => {
+  state.invertSearch = e.target.checked;
+  scheduleFilter();
+});
+$('case-sensitive')?.addEventListener('change', e => {
+  state.caseSensitive = e.target.checked;
+  rebuildRuleRegexes();
+});
+$('level-filter')?.addEventListener('change', e => {
+  state.level = e.target.value;
+  scheduleFilter();
+});
+
+// --- Top-pane view tabs ---
+document.querySelectorAll('[data-top-view]').forEach(tab => {
+  tab.addEventListener('click', () => switchTopView(tab.dataset.topView));
+});
+
+// --- Saved log library accordion ---
+$('library-toggle')?.addEventListener('click', () => {
+  const content = $('library-content');
+  if (!content) return;
+  content.hidden = !content.hidden;
+  const indicator = $('library-toggle')?.querySelector('span');
+  if (indicator) indicator.textContent = content.hidden ? '+' : '−';
+});
+
+// --- Clear all ---
+$('clear')?.addEventListener('click', clearAll);
+
+// ---------------------------------------------------------------------------
+// Initialise
+// ---------------------------------------------------------------------------
+
 renderLibrary();
-
-
