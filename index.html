@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Logalizer</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles/main.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="sidebar-toggle" class="icon-button" type="button" aria-label="Collapse controls" title="Collapse controls"><span></span><span></span><span></span></button>
+          <div class="brand">
+            <h1 class="brand-title">Logalizer</h1>
+          </div>
+        </div>
+        <div id="status" class="status status--idle" aria-live="polite">Ready for a log file</div>
+      </header>
+      <div class="workspace">
+        <aside id="sidebar" class="sidebar" aria-label="Log analyzer controls">
+          <section class="side-section">
+            <h2>Log source</h2>
+            <label class="file-drop" id="log-drop-zone">
+              <input id="log-file" type="file" accept=".log,.txt,.dlt,text/plain" />
+              <strong>Open log file</strong>
+              <span>Drop or select a logcat file</span>
+            </label>
+            <label class="check save-option"><input id="auto-save" type="checkbox" checked /> Save imports to this browser</label>
+            <p class="side-empty">Paste and edit text in the Raw Log Editor workspace.</p>
+          </section>
+
+          <section class="side-section library-section">
+            <button id="library-toggle" class="section-toggle" type="button">Saved log library <span>+</span></button>
+            <div id="library-content" hidden>
+              <div id="saved-logs" class="saved-logs"><p class="side-empty">No saved logs yet.</p></div>
+            </div>
+          </section>
+
+          <section class="side-section">
+            <h2>Filter results</h2>
+            <label for="search" class="field-label">Search regex tags</label>
+            <div class="inline-add">
+              <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="onPlay|Exception" />
+              <button id="add-search-tag" class="button" type="button" title="Add search tag">+</button>
+            </div>
+            <div id="search-tag-list" class="custom-filter-list"></div>
+            <label class="check"><input id="invert-search" type="checkbox" /> Hide matching lines</label>
+            
+            <label for="level-filter" class="field-label">Log level</label>
+            <select id="level-filter">
+              <option value="">All levels</option>
+              <option value="V">V (Verbose)</option>
+              <option value="D">D (Debug)</option>
+              <option value="I">I (Info)</option>
+              <option value="W">W (Warning)</option>
+              <option value="E">E (Error)</option>
+              <option value="F">F (Fatal)</option>
+            </select>
+            <label class="check"><input id="case-sensitive" type="checkbox" /> Case sensitive</label>
+          </section>
+
+          <section class="side-section">
+            <h2>Highlight (does not filter)</h2>
+            <div class="inline-add">
+              <input id="highlight-pattern" type="text" autocomplete="off" placeholder="usbSlot|Exception" />
+              <button id="add-highlight" class="button" type="button" title="Add highlight pattern">+</button>
+            </div>
+            <div id="highlight-list" class="custom-filter-list"></div>
+          </section>
+
+          <section class="side-section">
+            <h2>Repository map</h2>
+            <label class="file-drop file-drop--compact" id="repo-drop-zone">
+              <input id="repo-file" type="file" accept=".json,application/json" />
+              <strong>Open JSON map</strong>
+              <span>Class-name array</span>
+            </label>
+            <textarea id="repo-text" spellcheck="false" placeholder='["SessionCallbackController"]'></textarea>
+            <button id="import-repo-text" class="button" type="button">Load repository map</button>
+          </section>
+          
+          <button id="clear" class="button button--danger" type="button">Clear current analysis</button>
+        </aside>
+
+        <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical"></div>
+
+        <section class="analysis-panel">
+          <section class="top-pane-card">
+            <header class="panel-heading">
+              <div class="top-view-tabs" aria-label="Top pane view">
+                <button class="top-tab is-active" data-top-view="raw" type="button">Raw Log Editor</button>
+                <button class="top-tab" data-top-view="all" type="button">All Retained Lines <span id="all-tab-count" class="tab-badge">0</span></button>
+              </div>
+              <div class="panel-actions">
+                <span id="editor-mode">Live input: results update as you type or paste.</span>
+                <button class="button pane-fullscreen icon-btn" data-fullscreen="top-pane-card" type="button" title="Toggle Fullscreen" aria-label="Toggle Fullscreen">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                </button>
+              </div>
+            </header>
+            <div class="top-pane-content">
+              <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste adb logcat output here. Parsed results below update immediately."></textarea>
+              <div id="all-grid-card" class="grid-card-inner" hidden>
+                <div id="all-log-grid" class="log-grid" tabindex="0" aria-label="All log lines">
+                  <div class="grid-head grid-row">
+                    <span>LINE</span>
+                    <span>TIME</span>
+                    <span>LVL</span>
+                    <span>PID/TID</span>
+                    <span>COMPONENT</span>
+                    <span>MESSAGE</span>
+                  </div>
+                  <div id="all-grid-spacer"></div>
+                  <div id="all-grid-rows"></div>
+                  <p id="all-empty-state" class="empty-state">No log lines retained.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div id="panel-resizer" class="panel-resizer" role="separator" aria-label="Resize editor and results" aria-orientation="horizontal"></div>
+
+          <section class="bottom-pane-card">
+            <header class="panel-heading">
+              <div class="heading-title">
+                <strong>Filtered Results</strong>
+                <span id="filtered-tab-count" class="heading-badge">0</span>
+              </div>
+              <div class="panel-actions">
+                <button class="button pane-fullscreen icon-btn" data-fullscreen="bottom-pane-card" type="button" title="Toggle Fullscreen" aria-label="Toggle Fullscreen">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                </button>
+              </div>
+            </header>
+            <div class="grid-card-inner">
+              <div id="filtered-log-grid" class="log-grid" tabindex="0" aria-label="Filtered log lines">
+                <div class="grid-head grid-row">
+                  <span>LINE</span>
+                  <span>TIME</span>
+                  <span>LVL</span>
+                  <span>PID/TID</span>
+                  <span>COMPONENT</span>
+                  <span>MESSAGE</span>
+                </div>
+                <div id="filtered-grid-spacer"></div>
+                <div id="filtered-grid-rows"></div>
+                <p id="filtered-empty-state" class="empty-state">Paste logcat text or load a log file to begin.</p>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
