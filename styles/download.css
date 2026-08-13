@@ -1,0 +1,131 @@
+:root {
+  font-family: Consolas, monospace;
+  color: #e8e3d8;
+  background: #15191f;
+  --accent: #e6b450;
+  --cyan: #7fdbca;
+  --muted: #99a4b3;
+  --text: #c3cad3;
+  --panel: #1c222b;
+  --border: #3a4351;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; }
+
+main {
+  max-width: 720px;
+  margin: auto;
+  padding: 48px 24px 64px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #e6b450 0%, #7fdbca 100%);
+  box-shadow: 0 0 24px rgba(127, 219, 202, 0.15);
+}
+
+h1 {
+  color: var(--accent);
+  margin: 0;
+  font-size: 1.65rem;
+}
+
+.tagline {
+  color: var(--muted);
+  margin: 10px 0 32px;
+  line-height: 1.6;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 28px;
+}
+
+.card h2 {
+  font-size: 0.95rem;
+  color: var(--cyan);
+  margin: 0 0 14px;
+}
+
+.card p,
+.card li {
+  line-height: 1.65;
+  color: var(--text);
+  margin: 0 0 12px;
+}
+
+.card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.card li { margin-bottom: 8px; }
+
+.card li:last-child { margin-bottom: 0; }
+
+code {
+  color: var(--accent);
+  background: #202630;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+
+.download-panel {
+  text-align: center;
+  padding: 32px 24px;
+}
+
+.download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: bold;
+  color: #15191f;
+  background: linear-gradient(135deg, #e6b450, #d4a040);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 4px 16px rgba(230, 180, 80, 0.25);
+}
+
+.download-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(230, 180, 80, 0.35);
+}
+
+.download-btn:active { transform: translateY(0); }
+
+.download-meta {
+  margin-top: 14px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.note {
+  font-size: 0.82rem;
+  color: var(--muted);
+  border-left: 3px solid var(--border);
+  padding: 4px 16px;
+  margin: 0;
+  line-height: 1.6;
+}

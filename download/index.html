@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Logalizer — Download Source</title>
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles/download.css" />
+  </head>
+  <body>
+    <main>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <h1>Logalizer</h1>
+      </div>
+      <p class="tagline">
+        A local-first Android logcat and DLT log analyzer. No server, no build step, no network required after download.
+      </p>
+
+      <section class="card">
+        <h2>About</h2>
+        <p>
+          Logalizer helps you import, filter, highlight, and navigate large automotive and Android logs in the browser.
+          Files are streamed during import to stay responsive, and the results table is virtualized so only visible rows are rendered.
+        </p>
+        <ul>
+          <li>Supports logcat and DLT formats with auto-detection</li>
+          <li>Regex search tags, level filters, and independent highlight patterns</li>
+          <li>Repository class map with per-component row coloring</li>
+          <li>Raw log editor with row sync and browser-local saved logs</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>What's included</h2>
+        <p>The archive contains the full static source: HTML, CSS, and ES modules. Open <code>index.html</code> in Chrome or Edge to run it.</p>
+        <ul>
+          <li><code>index.html</code> — main analyzer</li>
+          <li><code>js/</code> — parser, filter engine, virtual grid, and app logic</li>
+          <li><code>styles/</code> — UI stylesheets</li>
+          <li><code>README.md</code> — setup and operating notes</li>
+        </ul>
+      </section>
+
+      <section class="card download-panel">
+        <h2>Download source code</h2>
+        <a class="download-btn" href="../public/logAnalyser.zip" download="logAnalyser.zip">
+          Download ZIP
+        </a>
+        <p class="download-meta">logAnalyser.zip · ~382 KB · static HTML/CSS/JS</p>
+      </section>
+
+      <p class="note">
+        Extract the archive anywhere on your machine and open <code>index.html</code> directly.
+        All processing runs locally in your browser.
+      </p>
+    </main>
+  </body>
+</html>
