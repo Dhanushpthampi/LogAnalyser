@@ -24,6 +24,7 @@ import {
   repositoryMapSummary,
 } from './repository-map.js';
 import { parseColorToRgb } from './color-utils.js';
+import { saveSession, loadSession, clearSession, trimEditorText } from './session-storage.js';
 
 // ---------------------------------------------------------------------------
 // Singletons
@@ -62,6 +63,8 @@ let filterTimer     = 0;     // debounce timeout for filter changes
 let editorFrame     = 0;     // rAF handle for editor parse scheduling
 let editorSaveTimer = 0;     // debounce timeout for library saves from editor
 let editorLibraryId = null;  // IndexedDB id for the active editor session
+let sessionSaveTimer = 0;    // debounce timeout for session persistence
+let restoringSession = false;
 
 // ---------------------------------------------------------------------------
 // Status bar
@@ -197,6 +200,8 @@ function applyView() {
       `${filtered.length.toLocaleString()} matching of ${store.lines.length.toLocaleString()} retained lines`
     );
   }
+
+  scheduleSessionSave();
 }
 
 function scheduleFilter() {
@@ -236,6 +241,7 @@ function parseEditorText() {
 
   applyView();
   scheduleEditorSave();
+  scheduleSessionSave();
 }
 
 function scheduleEditorSave() {
@@ -269,6 +275,7 @@ async function saveEditorToLibrary() {
       }
     }
     await renderLibrary();
+    scheduleSessionSave();
   } catch (err) {
     console.warn('[Logalizer] Editor save failed:', err);
     setStatus(`Could not save to library: ${err.message}`, 'error');
@@ -390,6 +397,7 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
       ? ` (kept newest ${APP_CONFIG.maxRetainedLines.toLocaleString()} lines)`
       : '';
     setStatus(`Import complete — ${store.totalRead.toLocaleString()} lines${dropNotice}`);
+    scheduleSessionSave();
 
   } catch (err) {
     if (err.name !== 'AbortError') {
@@ -607,6 +615,7 @@ function switchTopView(view) {
 
   // Trigger a render pass when switching to the grid view
   if (!isRaw) allGrid.schedule();
+  scheduleSessionSave();
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +671,168 @@ function clearAll() {
   updateMetrics();
   updateRepositoryStatus();
   setStatus('Ready for a log file');
+  clearSession();
+}
+
+// ---------------------------------------------------------------------------
+// Session persistence (survives page reload)
+// ---------------------------------------------------------------------------
+
+function serializeRules(rules) {
+  return rules.map(({ label, global, enabled }) => ({ label, global, enabled }));
+}
+
+function deserializeRules(items, defaultGlobal = false) {
+  const rules = [];
+  for (const item of items ?? []) {
+    if (!item?.label) continue;
+    try {
+      const global = !!item.global || defaultGlobal;
+      const flags = (state.caseSensitive ? '' : 'i') + (global ? 'g' : '');
+      rules.push({
+        id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+        label: item.label,
+        global,
+        regex: new RegExp(item.label, flags),
+        enabled: item.enabled !== false,
+      });
+    } catch {
+      /* skip invalid pattern */
+    }
+  }
+  return rules;
+}
+
+function serializeColumnFilters(filters) {
+  const out = {};
+  for (const [col, filter] of Object.entries(filters ?? {})) {
+    if (filter?.type === 'regex' && filter.pattern) {
+      out[col] = { type: 'regex', pattern: filter.pattern };
+    } else if (filter?.type === 'values' && filter.values?.length) {
+      out[col] = { type: 'values', values: filter.values };
+    }
+  }
+  return out;
+}
+
+function deserializeColumnFilters(serialized) {
+  const out = {};
+  for (const [col, filter] of Object.entries(serialized ?? {})) {
+    if (filter?.type === 'regex' && filter.pattern) {
+      try {
+        out[col] = {
+          type: 'regex',
+          pattern: filter.pattern,
+          regex: new RegExp(filter.pattern, 'i'),
+        };
+      } catch { /* skip invalid */ }
+    } else if (filter?.type === 'values' && filter.values?.length) {
+      out[col] = { type: 'values', values: [...filter.values] };
+    }
+  }
+  return out;
+}
+
+function buildSessionSnapshot() {
+  const editorText = $('log-text')?.value ?? '';
+  return {
+    version: 1,
+    editorLibraryId,
+    editorText: trimEditorText(editorText),
+    editorMode: $('editor-mode')?.textContent ?? '',
+    formatMode: state.formatMode,
+    topView: state.topView,
+    invertSearch: state.invertSearch,
+    caseSensitive: state.caseSensitive,
+    filterByRepository: state.filterByRepository,
+    level: state.level,
+    columnFilters: serializeColumnFilters(state.columnFilters),
+    searchTags: serializeRules(state.searchTags),
+    highlights: serializeRules(state.highlights),
+    searchInput: $('search')?.value ?? '',
+    quickFilterInput: $('quick-filter-input')?.value ?? '',
+    autoSave: $('auto-save')?.checked !== false,
+  };
+}
+
+function scheduleSessionSave() {
+  if (restoringSession) return;
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(persistSession, 400);
+}
+
+function persistSession() {
+  if (restoringSession) return;
+  saveSession(buildSessionSnapshot());
+}
+
+function applyFilterUiFromState() {
+  if ($('invert-search')) $('invert-search').checked = state.invertSearch;
+  if ($('case-sensitive')) $('case-sensitive').checked = state.caseSensitive;
+  if ($('filter-by-repository')) $('filter-by-repository').checked = state.filterByRepository;
+  if ($('level-filter')) $('level-filter').value = state.level;
+}
+
+async function restoreSession() {
+  const saved = loadSession();
+  if (!saved) return;
+
+  restoringSession = true;
+
+  try {
+    state.formatMode = saved.formatMode ?? 'AUTO';
+    state.topView = saved.topView ?? 'raw';
+    state.invertSearch = !!saved.invertSearch;
+    state.caseSensitive = !!saved.caseSensitive;
+    state.filterByRepository = !!saved.filterByRepository;
+    state.level = saved.level ?? '';
+    state.columnFilters = deserializeColumnFilters(saved.columnFilters);
+    state.searchTags = deserializeRules(saved.searchTags);
+    state.highlights = deserializeRules(saved.highlights, true);
+
+    applyFilterUiFromState();
+    if ($('search')) $('search').value = saved.searchInput ?? '';
+    if ($('quick-filter-input')) $('quick-filter-input').value = saved.quickFilterInput ?? '';
+    if ($('auto-save') && typeof saved.autoSave === 'boolean') $('auto-save').checked = saved.autoSave;
+
+    setFormatMode(state.formatMode, { silent: true });
+
+    renderRuleList('search-tag-list', state.searchTags, scheduleFilter);
+    renderRuleList('highlight-list', state.highlights, pushHighlightsToGrids);
+    updateColFilterIndicators();
+
+    editorLibraryId = saved.editorLibraryId ?? null;
+    let restoredText = saved.editorText ?? '';
+
+    if (editorLibraryId) {
+      try {
+        const record = await library.get(editorLibraryId);
+        if (record?.blob) restoredText = await record.blob.text();
+      } catch (err) {
+        console.warn('[Logalizer] Could not restore log from library:', err);
+      }
+    }
+
+    if (restoredText && $('log-text')) {
+      $('log-text').value = restoredText;
+      parseEditorText();
+      const modeEl = $('editor-mode');
+      if (modeEl && saved.editorMode) modeEl.textContent = saved.editorMode;
+    }
+
+    switchTopView(state.topView);
+
+    if (!restoredText) {
+      applyView();
+    }
+
+    setStatus('Restored previous session');
+  } catch (err) {
+    console.warn('[Logalizer] Could not restore session:', err);
+  } finally {
+    restoringSession = false;
+    persistSession();
+  }
 }
 
 // ===========================================================================
@@ -802,7 +973,7 @@ $('filter-by-repository')?.addEventListener('change', e => {
   updateRepositoryStatus();
   scheduleFilter();
 });
-function setFormatMode(mode) {
+function setFormatMode(mode, { silent = false } = {}) {
   state.formatMode = mode;
   if ($('log-format')) $('log-format').value = mode;
 
@@ -810,11 +981,15 @@ function setFormatMode(mode) {
     btn.classList.toggle('is-active', btn.dataset.format === mode);
   });
 
-  const modeLabels = { AUTO: 'Auto-detect', DLT: 'DLT Automotive', LOGCAT: 'Android Logcat' };
-  setStatus(`Log format mode: ${modeLabels[mode] ?? mode}`);
+  if (!silent) {
+    const modeLabels = { AUTO: 'Auto-detect', DLT: 'DLT Automotive', LOGCAT: 'Android Logcat' };
+    setStatus(`Log format mode: ${modeLabels[mode] ?? mode}`);
+  }
 
   if ($('log-text')?.value.trim()) {
     parseEditorText();
+  } else if (!silent) {
+    scheduleSessionSave();
   }
 }
 
@@ -1220,3 +1395,11 @@ function restoreRepositoryMap() {
 
 restoreRepositoryMap();
 renderLibrary();
+restoreSession();
+
+window.addEventListener('beforeunload', persistSession);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') persistSession();
+});
+
+$('auto-save')?.addEventListener('change', scheduleSessionSave);
