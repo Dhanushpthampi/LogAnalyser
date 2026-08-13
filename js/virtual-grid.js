@@ -52,23 +52,48 @@ export class VirtualGrid {
     this.records          = [];
     this.filterHighlights = [];   // cyan — from search/filter tags
     this.patternHighlights = [];  // gold — from the Highlight section
+    this.markedLines      = new Set();
     this.selectedLine     = null;
+    this.onContextMenu    = null;
     this._frame           = 0;    // rAF handle
+    this._pendingRender   = false;
     this._pidColors       = new Map(); // pid string → hsl color
+    this._pointer         = { x: 0, y: 0, moved: false };
 
     // Re-render on scroll
     this.scrollEl.addEventListener('scroll', () => this.schedule());
 
-    // Row click → select
+    // Row interactions — single click jumps to editor unless selecting text
+    this.rows?.addEventListener('mousedown', e => {
+      this._pointer = { x: e.clientX, y: e.clientY, moved: false };
+    });
+    this.rows?.addEventListener('mousemove', e => {
+      if (Math.abs(e.clientX - this._pointer.x) > 3 || Math.abs(e.clientY - this._pointer.y) > 3) {
+        this._pointer.moved = true;
+      }
+    });
     this.rows?.addEventListener('click', e => {
       const row = e.target.closest('[data-index]');
       if (!row) return;
+      if (this._pointer.moved) return;
+      if (this._hasActiveSelection()) return;
       const record = this.records[Number(row.dataset.index)];
       if (record) {
         this.selectedLine = record.line;
         this.onSelect(record);
         this.schedule();
       }
+    });
+    this.rows?.addEventListener('contextmenu', e => {
+      const row = e.target.closest('[data-index]');
+      if (!row) return;
+      e.preventDefault();
+      const record = this.records[Number(row.dataset.index)];
+      if (record) this.onContextMenu?.(e, record);
+    });
+
+    document.addEventListener('selectionchange', () => {
+      if (this._pendingRender && !this._hasActiveSelection()) this.schedule();
     });
 
     this.onSelect = onSelect;
@@ -112,6 +137,12 @@ export class VirtualGrid {
     this.schedule();
   }
 
+  /** Update which line numbers show as marked. */
+  setMarkedLines(markedLines) {
+    this.markedLines = markedLines instanceof Set ? markedLines : new Set(markedLines ?? []);
+    this.schedule();
+  }
+
   /** Scroll so that the row with this line number is visible. */
   scrollToLine(lineNumber) {
     const index = this.records.findIndex(r => r.line === lineNumber);
@@ -146,6 +177,12 @@ export class VirtualGrid {
   // ---------------------------------------------------------------------------
 
   _render() {
+    if (this._hasActiveSelection()) {
+      this._pendingRender = true;
+      return;
+    }
+    this._pendingRender = false;
+
     const count = this.records.length;
 
     // Show/hide empty-state placeholder
@@ -184,14 +221,18 @@ export class VirtualGrid {
     const [date = '', time = ''] = (r.timestamp ?? '').split(' ');
     const [pid  = '', tid  = ''] = (r.pidTid    ?? '').split('/');
     const selected = r.line === this.selectedLine ? ' is-selected' : '';
+    const marked   = this.markedLines.has(r.line);
     const pidStyle = pid ? ` style="color:${this._pidColor(pid)}"` : '';
     const compColor = getComponentColor(r.component);
     const rowBg = compColor ? subtleBackground(compColor, 0.2) : '';
     const rowStyle = rowBg ? ` style="--row-bg:${rowBg}"` : '';
+    const lineCell = marked
+      ? `<span class="line-number is-marked-num"><span class="line-mark-icon" aria-hidden="true">★</span>${r.line}</span>`
+      : `<span class="line-number">${r.line}</span>`;
 
     return (
-      `<div data-index="${index}" class="log-row grid-row${selected}${rowBg ? ' has-comp-bg' : ''}"${rowStyle} title="${escapeHtml(r.raw)}">` +
-        `<span class="line-number">${r.line}</span>` +
+      `<div data-index="${index}" class="log-row grid-row${selected}${marked ? ' is-marked' : ''}${rowBg ? ' has-comp-bg' : ''}"${rowStyle} title="${escapeHtml(r.raw)}">` +
+        lineCell +
         `<span class="timestamp"><em>${this._hl(date)}</em> <strong>${this._hl(time)}</strong></span>` +
         `<span class="level-${r.level ?? '?'}">${r.level ?? '?'}</span>` +
         `<span class="pid"${pidStyle}>${this._hl(pid)}<i>${tid ? `/${this._hl(tid)}` : ''}</i></span>` +
@@ -265,6 +306,13 @@ export class VirtualGrid {
 
   _headerHeight() {
     return this.headerEl?.offsetHeight ?? 0;
+  }
+
+  _hasActiveSelection() {
+    const sel = document.getSelection();
+    if (!sel || sel.isCollapsed) return false;
+    const node = sel.anchorNode;
+    return !!(node && this.rows?.contains(node));
   }
 
   _estimateWidth(records) {

@@ -38,6 +38,8 @@ const library          = new LogLibrary();
 const allGrid      = new VirtualGrid($('all-log-grid'),      onRowSelect);
 const filteredGrid = new VirtualGrid($('filtered-log-grid'), onRowSelect);
 
+let contextMenuRecord = null;
+
 // ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
@@ -52,6 +54,7 @@ const state = {
   columnFilters:      {},      // { lvl, component, pidTid, message, time }
   searchTags:         [],      // { id, label, global, regex, enabled }[]
   highlights:         [],      // { id, label, global, regex, enabled }[]
+  markedLines:        new Set(), // editor line numbers flagged for quick finding
 };
 
 // ---------------------------------------------------------------------------
@@ -179,6 +182,125 @@ function pushHighlightsToGrids() {
   filteredGrid.setHighlights(filterRxs, patternRxs);
 }
 
+function pushMarkedLinesToGrids() {
+  allGrid.setMarkedLines(state.markedLines);
+  filteredGrid.setMarkedLines(state.markedLines);
+}
+
+function isLineMarked(line) {
+  return state.markedLines.has(line);
+}
+
+function setLineMarked(line, marked) {
+  if (marked) state.markedLines.add(line);
+  else state.markedLines.delete(line);
+  pushMarkedLinesToGrids();
+  updateRawEditorGutter();
+  updateRawEditorMarkers();
+  scheduleSessionSave();
+}
+
+function toggleLineMarked(line) {
+  setLineMarked(line, !isLineMarked(line));
+}
+
+async function copyToClipboard(text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus('Copied to clipboard');
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.append(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    setStatus('Copied to clipboard');
+  }
+}
+
+function hideLineContextMenu() {
+  const menu = $('line-context-menu');
+  if (menu) menu.hidden = true;
+  contextMenuRecord = null;
+}
+
+function showLineContextMenu(e, record) {
+  const menu = $('line-context-menu');
+  if (!menu || !record) return;
+
+  e.preventDefault();
+  contextMenuRecord = record;
+
+  const marked = isLineMarked(record.line);
+  menu.querySelector('[data-action="mark"]').hidden = marked;
+  menu.querySelector('[data-action="unmark"]').hidden = !marked;
+
+  const gotoBtn = menu.querySelector('[data-action="goto"]');
+  if (gotoBtn) gotoBtn.hidden = !($('log-text')?.value);
+
+  menu.hidden = false;
+
+  const pad = 8;
+  let left = e.clientX;
+  let top  = e.clientY;
+  menu.style.left = `${left}px`;
+  menu.style.top  = `${top}px`;
+
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth - pad) {
+    left = Math.max(pad, window.innerWidth - rect.width - pad);
+  }
+  if (rect.bottom > window.innerHeight - pad) {
+    top = Math.max(pad, window.innerHeight - rect.height - pad);
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top  = `${top}px`;
+}
+
+function getEditorLineAtCursor() {
+  const editor = $('log-text');
+  if (!editor) return 1;
+  return editor.value.slice(0, editor.selectionStart).split('\n').length;
+}
+
+function getEditorLineRaw(lineNum) {
+  const editor = $('log-text');
+  if (!editor) return '';
+  return editor.value.split('\n')[lineNum - 1] ?? '';
+}
+
+function showEditorContextMenu(e) {
+  const line = getEditorLineAtCursor();
+  showLineContextMenu(e, { line, raw: getEditorLineRaw(line) });
+}
+
+function getGutterLineAtEvent(e) {
+  const gutter = $('raw-editor-gutter');
+  const editor = $('log-text');
+  if (!gutter || !editor) return 1;
+
+  const lineEl = e.target.closest('.gutter-line');
+  if (lineEl?.dataset.line) return Number(lineEl.dataset.line);
+
+  const lineH = 18;
+  const padTop = 10;
+  const rect = gutter.getBoundingClientRect();
+  const y = e.clientY - rect.top + gutter.scrollTop - padTop;
+  const count = Math.max(1, editor.value.split('\n').length);
+  return Math.max(1, Math.min(count, Math.floor(y / lineH) + 1));
+}
+
+function showGutterContextMenu(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const line = getGutterLineAtEvent(e);
+  showLineContextMenu(e, { line, raw: getEditorLineRaw(line) });
+}
+
 // ---------------------------------------------------------------------------
 // Core view update
 // ---------------------------------------------------------------------------
@@ -193,6 +315,7 @@ function applyView() {
   filteredGrid.setRecords(filtered);
 
   pushHighlightsToGrids();
+  pushMarkedLinesToGrids();
   updateMetrics();
 
   if (store.lines.length) {
@@ -295,13 +418,41 @@ function updateRawEditorGutter() {
   const gutter = $('raw-editor-gutter');
   if (!editor || !gutter) return;
   const count = Math.max(1, editor.value.split('\n').length);
-  gutter.textContent = Array.from({ length: count }, (_, i) => i + 1).join('\n');
+  gutter.innerHTML = Array.from({ length: count }, (_, i) => {
+    const lineNum = i + 1;
+    const marked = isLineMarked(lineNum);
+    const cls = marked ? 'gutter-line is-marked' : 'gutter-line';
+    const icon = marked ? '<span class="gutter-mark-icon" aria-hidden="true">★</span>' : '';
+    return `<span class="${cls}" data-line="${lineNum}">${icon}${lineNum}</span>`;
+  }).join('');
+  updateRawEditorMarkers();
+}
+
+function updateRawEditorMarkers() {
+  const editor = $('log-text');
+  const inner = $('raw-editor-markers-inner');
+  if (!editor || !inner) return;
+
+  const lineH = 18;
+  const lines = editor.value.split('\n');
+  const count = Math.max(1, lines.length);
+
+  inner.style.height = `${count * lineH}px`;
+  inner.innerHTML = lines.map((_, i) => {
+    const lineNum = i + 1;
+    if (!isLineMarked(lineNum)) return '';
+    return `<div class="mark-band" style="top:${i * lineH}px"></div>`;
+  }).join('');
+  inner.style.transform = `translateY(-${editor.scrollTop}px)`;
 }
 
 function syncRawEditorGutterScroll() {
   const editor = $('log-text');
   const gutter = $('raw-editor-gutter');
-  if (editor && gutter) gutter.scrollTop = editor.scrollTop;
+  const inner = $('raw-editor-markers-inner');
+  const scrollTop = editor?.scrollTop ?? 0;
+  if (gutter) gutter.scrollTop = scrollTop;
+  if (inner) inner.style.transform = `translateY(-${scrollTop}px)`;
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +824,7 @@ function clearAll() {
   state.columnFilters  = {};
   state.searchTags     = [];
   state.highlights     = [];
+  state.markedLines    = new Set();
   updateColFilterIndicators();
 
   switchTopView('raw');
@@ -769,6 +921,7 @@ function buildSessionSnapshot() {
     searchInput: $('search')?.value ?? '',
     quickFilterInput: $('quick-filter-input')?.value ?? '',
     autoSave: $('auto-save')?.checked !== false,
+    markedLines: [...state.markedLines],
   };
 }
 
@@ -806,6 +959,7 @@ async function restoreSession() {
     state.columnFilters = deserializeColumnFilters(saved.columnFilters);
     state.searchTags = deserializeRules(saved.searchTags);
     state.highlights = deserializeRules(saved.highlights, true);
+    state.markedLines = new Set((saved.markedLines ?? []).map(Number).filter(n => n > 0));
 
     applyFilterUiFromState();
     if ($('search')) $('search').value = saved.searchInput ?? '';
@@ -817,6 +971,8 @@ async function restoreSession() {
     renderRuleList('search-tag-list', state.searchTags, scheduleFilter);
     renderRuleList('highlight-list', state.highlights, pushHighlightsToGrids);
     updateColFilterIndicators();
+    pushMarkedLinesToGrids();
+    updateRawEditorGutter();
 
     editorLibraryId = saved.editorLibraryId ?? null;
     let restoredText = saved.editorText ?? '';
@@ -945,7 +1101,48 @@ $('log-text')?.addEventListener('input', () => {
   scheduleEditorParse();
 });
 $('log-text')?.addEventListener('scroll', syncRawEditorGutterScroll);
+$('log-text')?.addEventListener('contextmenu', showEditorContextMenu);
+$('raw-editor-wrap')?.addEventListener('contextmenu', e => {
+  if (e.target.closest('#raw-editor-gutter') || e.target.closest('.gutter-line')) {
+    showGutterContextMenu(e);
+  }
+});
 updateRawEditorGutter();
+
+allGrid.onContextMenu = showLineContextMenu;
+filteredGrid.onContextMenu = showLineContextMenu;
+
+// --- Line context menu ---
+$('line-context-menu')?.addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn || !contextMenuRecord) return;
+  const { line, raw } = contextMenuRecord;
+  switch (btn.dataset.action) {
+    case 'mark':
+      setLineMarked(line, true);
+      setStatus(`Marked line ${line}`);
+      break;
+    case 'unmark':
+      setLineMarked(line, false);
+      setStatus(`Unmarked line ${line}`);
+      break;
+    case 'copy':
+      copyToClipboard(raw ?? getEditorLineRaw(line));
+      break;
+    case 'goto':
+      onRowSelect(contextMenuRecord);
+      break;
+    default:
+      break;
+  }
+  hideLineContextMenu();
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('#line-context-menu')) hideLineContextMenu();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') hideLineContextMenu();
+});
 
 // --- Repository map text ---
 $('import-repo-text')?.addEventListener('click', () => {

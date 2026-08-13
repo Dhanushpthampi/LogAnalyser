@@ -117,7 +117,12 @@
             <div class="top-pane-content">
               <div id="raw-editor-wrap" class="raw-editor-wrap">
                 <div id="raw-editor-gutter" class="raw-editor-gutter" aria-hidden="true">1</div>
-                <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste Logcat or DLT log output here. Parsed results below update immediately."></textarea>
+                <div class="raw-editor-body">
+                  <div id="raw-editor-markers" class="raw-editor-markers" aria-hidden="true">
+                    <div id="raw-editor-markers-inner" class="raw-editor-markers-inner"></div>
+                  </div>
+                  <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste Logcat or DLT log output here. Parsed results below update immediately."></textarea>
+                </div>
               </div>
               <div id="all-grid-card" class="grid-card-inner" hidden>
                 <div class="grid-vscroll">
@@ -174,6 +179,14 @@
         </section>
       </div>
     </main>
+
+    <!-- Row context menu (mark / copy) -->
+    <div id="line-context-menu" class="line-context-menu" hidden>
+      <button type="button" data-action="mark">Mark line</button>
+      <button type="button" data-action="unmark" hidden>Unmark line</button>
+      <button type="button" data-action="copy">Copy line</button>
+      <button type="button" data-action="goto">Go to line in editor</button>
+    </div>
 
     <!-- Column Header Filter Popover -->
     <div id="header-filter-popover" class="header-filter-popover" hidden>

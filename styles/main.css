@@ -515,8 +515,8 @@ body {
 
 .raw-editor-gutter {
   flex:         0 0 auto;
-  width:        48px;
-  padding:      10px 6px 10px 8px;
+  width:        52px;
+  padding:      10px 4px 10px 6px;
   background:   #0d1116;
   border-right: 1px solid var(--line);
   color:        #627285;
@@ -525,14 +525,58 @@ body {
   overflow:     hidden;
   user-select:  none;
   white-space:  pre;
+  cursor:       context-menu;
+}
+
+.raw-editor-body {
+  flex:        1;
+  min-width:   0;
+  min-height:  0;
+  position:    relative;
+  display:     flex;
+  background:  #11161c;
+}
+
+.raw-editor-markers {
+  position:       absolute;
+  inset:          0;
+  overflow:       hidden;
+  pointer-events: none;
+  z-index:        0;
+  padding:        10px 12px 10px 8px;
+  box-sizing:     border-box;
+}
+
+.raw-editor-markers-inner {
+  position:   relative;
+  width:      100%;
+  will-change: transform;
+}
+
+.raw-editor-markers .mark-band {
+  position:   absolute;
+  left:       0;
+  right:      0;
+  height:     18px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 193, 7, 0.16),
+    rgba(255, 193, 7, 0.16) 5px,
+    rgba(255, 152, 0, 0.06) 5px,
+    rgba(255, 152, 0, 0.06) 10px
+  );
+  border-left:  4px solid #ffc107;
+  box-shadow:   inset 0 0 0 1px rgba(255, 193, 7, 0.45), 0 0 12px rgba(255, 193, 7, 0.12);
 }
 
 .raw-editor {
   flex:        1;
   min-width:   0;
   min-height:  0;
+  position:    relative;
+  z-index:     1;
   border:      0;
-  background:  #11161c;
+  background:  transparent;
   color:       #dfe6ef;
   padding:     10px 12px 10px 8px;
   resize:      none;
@@ -626,7 +670,44 @@ body {
   border-bottom:          1px solid #202732;
 }
 
-.log-row { cursor: pointer; background: var(--row-bg, transparent); }
+.log-row { cursor: pointer; background: var(--row-bg, transparent); user-select: text; }
+.log-row span { user-select: text; }
+.log-row.is-marked {
+  outline:        1px solid rgba(255, 193, 7, 0.65);
+  outline-offset: -1px;
+  box-shadow:
+    inset 5px 0 0 #ffc107,
+    inset 0 0 0 1px rgba(255, 193, 7, 0.25),
+    0 0 14px rgba(255, 193, 7, 0.12);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 193, 7, 0.1),
+    rgba(255, 193, 7, 0.1) 6px,
+    rgba(255, 152, 0, 0.04) 6px,
+    rgba(255, 152, 0, 0.04) 12px
+  ) !important;
+}
+.log-row.is-marked.has-comp-bg:hover,
+.log-row.is-marked.has-comp-bg.is-selected,
+.log-row.is-marked:hover,
+.log-row.is-marked.is-selected {
+  box-shadow:
+    inset 5px 0 0 #ffc107,
+    inset 0 0 0 1px rgba(255, 193, 7, 0.45),
+    0 0 18px rgba(255, 193, 7, 0.2);
+}
+.line-mark-icon,
+.gutter-mark-icon {
+  color:       #ffc107;
+  font-size:   11px;
+  margin-right: 2px;
+  text-shadow: 0 0 8px rgba(255, 193, 7, 0.9);
+}
+.line-number.is-marked-num {
+  color:       #ffc107;
+  font-weight: bold;
+  text-shadow: 0 0 6px rgba(255, 193, 7, 0.55);
+}
 .log-row.has-comp-bg:hover,
 .log-row.has-comp-bg.is-selected {
   background: color-mix(in srgb, var(--row-bg, transparent) 42%, #2a3342);
@@ -707,6 +788,54 @@ mark.pattern-highlight {
   border:       1px solid rgba(230, 180, 80, .55);
   box-shadow:   0 0 5px rgba(230, 180, 80, .25);
 }
+
+.raw-editor-gutter .gutter-line {
+  display: block;
+  line-height: 1.5;
+  padding-right: 2px;
+  border-radius: 3px;
+}
+.raw-editor-gutter .gutter-line.is-marked {
+  color:        #ffc107;
+  font-weight:  bold;
+  background:   rgba(255, 193, 7, 0.12);
+  box-shadow:   inset 3px 0 0 #ffc107;
+  text-shadow:  0 0 8px rgba(255, 193, 7, 0.75);
+}
+.raw-editor-gutter .gutter-mark-icon {
+  display: inline-block;
+  transform: scale(0.95);
+}
+
+/* Row context menu */
+.line-context-menu {
+  position:      fixed;
+  z-index:       10000;
+  min-width:     170px;
+  background:    #1a2029;
+  border:        1px solid var(--line);
+  border-radius: 8px;
+  box-shadow:    0 10px 28px rgba(0, 0, 0, .55);
+  padding:       4px;
+  display:       flex;
+  flex-direction: column;
+  gap:           2px;
+}
+.line-context-menu button {
+  background:    transparent;
+  border:        0;
+  border-radius: 5px;
+  color:         var(--text);
+  cursor:        pointer;
+  font:          12px/1.4 Consolas, monospace;
+  padding:       7px 10px;
+  text-align:    left;
+}
+.line-context-menu button:hover {
+  background: rgba(255, 255, 255, .08);
+  color:      var(--accent);
+}
+.line-context-menu button[data-action="unmark"] { color: #e6b450; }
 
 /* ==========================================================================
    Clickable Column Header Filters
@@ -881,6 +1010,7 @@ mark.pattern-highlight {
   min-height: 0;
 }
 .top-pane-card:fullscreen .raw-editor-wrap,
+.top-pane-card:fullscreen .raw-editor-body,
 .top-pane-card:fullscreen .log-grid,
 .bottom-pane-card:fullscreen .log-grid {
   flex: 1;
