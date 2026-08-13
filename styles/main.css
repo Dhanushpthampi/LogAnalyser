@@ -602,10 +602,14 @@ body {
   border-bottom:          1px solid #202732;
 }
 
-.log-row { cursor: pointer; }
+.log-row { cursor: pointer; background: var(--row-bg, transparent); }
+.log-row.has-comp-bg:hover,
+.log-row.has-comp-bg.is-selected {
+  background: color-mix(in srgb, var(--row-bg, transparent) 42%, #2a3342);
+}
 .log-row:hover,
 .log-row.is-selected {
-  background: #2a3342;
+  background: color-mix(in srgb, var(--row-bg, transparent) 28%, #2a3342);
   box-shadow: inset 3px 0 var(--accent);
 }
 
@@ -844,11 +848,20 @@ mark.pattern-highlight {
 .bottom-pane-card:fullscreen {
   background: #12161b;
   padding:    12px;
+  display:    flex;
+  flex-direction: column;
+}
+.top-pane-card:fullscreen .top-pane-content,
+.bottom-pane-card:fullscreen .grid-card-inner {
+  flex: 1;
+  min-height: 0;
 }
 .top-pane-card:fullscreen .raw-editor,
 .top-pane-card:fullscreen .log-grid,
 .bottom-pane-card:fullscreen .log-grid {
-  height: calc(100vh - 60px);
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 /* Quick Filter Toolbar & Dropdown */
@@ -950,6 +963,63 @@ mark.pattern-highlight {
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 0.68rem;
+}
+
+/* ==========================================================================
+   Repository map status & preview
+   ========================================================================== */
+
+.repo-status {
+  font-size:   .68rem;
+  color:       var(--muted);
+  margin:      0 0 8px;
+  padding:     6px 8px;
+  border-radius: 4px;
+  background:  rgba(255,255,255,.03);
+  border:      1px solid transparent;
+  line-height: 1.4;
+}
+.repo-status--loaded {
+  color:       var(--cyan);
+  border-color: rgba(127,219,202,.25);
+}
+.repo-status--active {
+  color:       var(--accent);
+  border-color: rgba(230,180,80,.35);
+  background:  rgba(230,180,80,.08);
+}
+
+.repo-preview {
+  display:   flex;
+  flex-wrap: wrap;
+  gap:       4px;
+  margin-top: 8px;
+}
+.repo-chip {
+  display:     inline-flex;
+  align-items: center;
+  gap:         4px;
+  font-size:   .62rem;
+  color:       var(--text);
+  background:  rgba(255,255,255,.06);
+  border:      1px solid #3d4857;
+  border-radius: 4px;
+  padding:     2px 6px 2px 4px;
+  max-width:   100%;
+  overflow:    hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-chip--more {
+  color:     var(--muted);
+  font-style: italic;
+}
+.repo-swatch {
+  width:        8px;
+  height:       8px;
+  border-radius: 2px;
+  flex-shrink:  0;
+  border:       1px solid rgba(255,255,255,.2);
 }
 
 /* ==========================================================================

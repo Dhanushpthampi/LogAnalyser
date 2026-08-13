@@ -70,6 +70,7 @@
               <option value="F">F (Fatal)</option>
             </select>
             <label class="check"><input id="case-sensitive" type="checkbox" /> Case sensitive</label>
+            <label class="check"><input id="filter-by-repository" type="checkbox" /> Only show repository map components</label>
           </section>
 
           <section class="side-section">
@@ -83,13 +84,15 @@
 
           <section class="side-section">
             <h2>Repository map</h2>
+            <p id="repo-status" class="repo-status repo-status--empty">No map loaded — paste JSON or drop a file</p>
             <label class="file-drop file-drop--compact" id="repo-drop-zone">
               <input id="repo-file" type="file" accept=".json,application/json" />
               <strong>Open JSON map</strong>
-              <span>Class-name array</span>
+              <span>Array or object with colors</span>
             </label>
-            <textarea id="repo-text" spellcheck="false" placeholder='["SessionCallbackController"]'></textarea>
+            <textarea id="repo-text" spellcheck="false" placeholder='["SessionCallbackController"]&#10;or&#10;{"SessionCallbackController":"#e74c3c","FooService":"blue"}'></textarea>
             <button id="import-repo-text" class="button" type="button">Load repository map</button>
+            <div id="repo-preview" class="repo-preview" hidden></div>
           </section>
           
           <button id="clear" class="button button--danger" type="button">Clear current analysis</button>

@@ -15,6 +15,15 @@ import { LogStore }                  from './log-store.js';
 import { compileSearch, filterRecords } from './filter-engine.js';
 import { VirtualGrid }               from './virtual-grid.js';
 import { LogLibrary }                from './log-library.js';
+import {
+  repositoryMap,
+  parseRepositoryJson,
+  saveRepositoryToStorage,
+  loadRepositoryFromStorage,
+  clearRepositoryStorage,
+  repositoryMapSummary,
+} from './repository-map.js';
+import { parseColorToRgb } from './color-utils.js';
 
 // ---------------------------------------------------------------------------
 // Singletons
@@ -23,7 +32,6 @@ import { LogLibrary }                from './log-library.js';
 const $ = id => document.getElementById(id);
 
 const store            = new LogStore();
-const repositoryClasses = new Set();
 const library          = new LogLibrary();
 
 const allGrid      = new VirtualGrid($('all-log-grid'),      onRowSelect);
@@ -34,14 +42,15 @@ const filteredGrid = new VirtualGrid($('filtered-log-grid'), onRowSelect);
 // ---------------------------------------------------------------------------
 
 const state = {
-  topView:       'raw',   // 'raw' | 'all'
-  invertSearch:  false,
-  caseSensitive: false,
-  level:         '',
-  formatMode:    'AUTO',  // 'AUTO' | 'DLT' | 'LOGCAT'
-  columnFilters: {},      // { lvl, component, pidTid, message, time }
-  searchTags:    [],      // { id, label, global, regex, enabled }[]
-  highlights:    [],      // { id, label, global, regex, enabled }[]
+  topView:            'raw',   // 'raw' | 'all'
+  invertSearch:       false,
+  caseSensitive:      false,
+  filterByRepository: false,
+  level:              '',
+  formatMode:         'AUTO',  // 'AUTO' | 'DLT' | 'LOGCAT'
+  columnFilters:      {},      // { lvl, component, pidTid, message, time }
+  searchTags:         [],      // { id, label, global, regex, enabled }[]
+  highlights:         [],      // { id, label, global, regex, enabled }[]
 };
 
 // ---------------------------------------------------------------------------
@@ -76,7 +85,69 @@ function updateMetrics() {
   if ($('retained-count')) $('retained-count').textContent = store.lines.length.toLocaleString();
   if ($('shown-count'))   $('shown-count').textContent   = shown.toLocaleString();
   if ($('format'))        $('format').textContent        = [...store.formats].filter(f => f !== 'UNKNOWN').join(' + ') || '—';
-  if ($('repo-count'))    $('repo-count').textContent    = repositoryClasses.size.toLocaleString();
+  if ($('repo-count'))    $('repo-count').textContent    = repositoryMap.size.toLocaleString();
+  updateRepositoryStatus();
+}
+
+function updateRepositoryStatus() {
+  const el = $('repo-status');
+  if (!el) return;
+
+  const { total, colored } = repositoryMapSummary();
+  if (!total) {
+    el.textContent = 'No map loaded — paste JSON or drop a file';
+    el.className = 'repo-status repo-status--empty';
+    return;
+  }
+
+  const filterNote = state.filterByRepository ? ' · filtering active' : '';
+  const colorNote = colored ? ` · ${colored} with colors` : '';
+  el.textContent = `${total.toLocaleString()} component${total === 1 ? '' : 's'} loaded${colorNote}${filterNote}`;
+  el.className = `repo-status repo-status--loaded${state.filterByRepository ? ' repo-status--active' : ''}`;
+  renderRepositoryPreview();
+}
+
+function renderRepositoryPreview() {
+  const list = $('repo-preview');
+  if (!list) return;
+
+  if (!repositoryMap.size) {
+    list.replaceChildren();
+    list.hidden = true;
+    return;
+  }
+
+  list.hidden = false;
+  list.replaceChildren(
+    ...[...repositoryMap.entries()].slice(0, 24).map(([name, color]) => {
+      const chip = document.createElement('span');
+      chip.className = 'repo-chip';
+      chip.title = name;
+
+      if (color && parseColorToRgb(color)) {
+        const swatch = document.createElement('span');
+        swatch.className = 'repo-swatch';
+        swatch.style.background = color;
+        chip.append(swatch);
+      }
+
+      const label = document.createElement('span');
+      label.textContent = name.split('.').pop() || name;
+      chip.append(label);
+
+      if (name.includes('.')) {
+        chip.title = name;
+      }
+      return chip;
+    })
+  );
+
+  if (repositoryMap.size > 24) {
+    const more = document.createElement('span');
+    more.className = 'repo-chip repo-chip--more';
+    more.textContent = `+${repositoryMap.size - 24} more`;
+    list.append(more);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +182,7 @@ function applyView() {
   const sidebarSearch = $('search')?.value ?? '';
   const quickSearch   = $('quick-filter-input')?.value ?? '';
   const liveQuery     = [sidebarSearch, quickSearch].filter(Boolean).join(' ');
-  const filtered      = filterRecords(store.lines, state, repositoryClasses, liveQuery);
+  const filtered      = filterRecords(store.lines, state, liveQuery);
 
   allGrid.setRecords(store.lines);
   filteredGrid.setRecords(filtered);
@@ -281,26 +352,19 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
 // Repository map
 // ---------------------------------------------------------------------------
 
-function loadRepositoryText(jsonText) {
+function loadRepositoryText(jsonText, { persist = true, filterEnabled = null } = {}) {
   try {
-    const payload = JSON.parse(jsonText);
-    const values  = Array.isArray(payload)
-      ? payload
-      : (payload.classes ?? payload.classNames ?? []);
-
-    if (!Array.isArray(values)) throw new TypeError('Expected a JSON array of class name strings');
-
-    repositoryClasses.clear();
-    values
-      .filter(v => typeof v === 'string')
-      .map(v => v.trim())
-      .filter(Boolean)
-      .forEach(v => repositoryClasses.add(v));
+    const count = parseRepositoryJson(jsonText);
+    if (persist) {
+      saveRepositoryToStorage(jsonText, filterEnabled ?? state.filterByRepository);
+    }
+    if ($('repo-text')) $('repo-text').value = jsonText.trim();
 
     updateMetrics();
-    setStatus(`Loaded ${repositoryClasses.size.toLocaleString()} repository class names`);
+    const { colored } = repositoryMapSummary();
+    const colorMsg = colored ? ` (${colored} with colors)` : '';
+    setStatus(`Repository map loaded — ${count.toLocaleString()} components${colorMsg}`);
     scheduleFilter();
-
   } catch (err) {
     setStatus(`Repository map error: ${err.message}`, 'error');
   }
@@ -499,7 +563,8 @@ function switchTopView(view) {
 function clearAll() {
   abortController?.abort();
   store.clear();
-  repositoryClasses.clear();
+  repositoryMap.clear();
+  clearRepositoryStorage();
 
   // Reset all checkboxes except auto-save
   document.querySelectorAll('input[type=checkbox]').forEach(el => {
@@ -519,10 +584,11 @@ function clearAll() {
   if (editorMode) editorMode.textContent = 'Paste Logcat or DLT logs here — changes are parsed automatically';
 
   // Reset state
-  state.topView        = 'raw';
-  state.invertSearch   = false;
-  state.caseSensitive  = false;
-  state.level          = '';
+  state.topView            = 'raw';
+  state.invertSearch       = false;
+  state.caseSensitive      = false;
+  state.filterByRepository = false;
+  state.level              = '';
   state.columnFilters  = {};
   state.searchTags     = [];
   state.highlights     = [];
@@ -539,6 +605,7 @@ function clearAll() {
   filteredGrid.setRecords([]);
 
   updateMetrics();
+  updateRepositoryStatus();
   setStatus('Ready for a log file');
 }
 
@@ -599,12 +666,27 @@ document.querySelectorAll('.pane-fullscreen').forEach(btn => {
   btn.addEventListener('click', () => {
     const target = document.querySelector(`.${btn.dataset.fullscreen}`);
     if (!target) return;
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement === target) {
       document.exitFullscreen?.();
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen?.().then(() => target.requestFullscreen?.());
     } else {
       target.requestFullscreen?.();
     }
   });
+});
+
+// Return filter popover to body when exiting fullscreen
+document.addEventListener('fullscreenchange', () => {
+  const popover = $('header-filter-popover');
+  if (!popover) return;
+  if (!document.fullscreenElement && popover.parentElement !== document.body) {
+    document.body.appendChild(popover);
+  }
+  if (_activeColFilter && !popover.hidden) {
+    const btn = document.querySelector(`.col-filter-btn[data-col="${_activeColFilter}"]`);
+    if (btn) openColFilterPopover(_activeColFilter, btn);
+  }
 });
 
 // --- File import ---
@@ -657,6 +739,12 @@ $('case-sensitive')?.addEventListener('change', e => {
 });
 $('level-filter')?.addEventListener('change', e => {
   state.level = e.target.value;
+  scheduleFilter();
+});
+$('filter-by-repository')?.addEventListener('change', e => {
+  state.filterByRepository = e.target.checked;
+  saveRepositoryToStorage($('repo-text')?.value ?? '', state.filterByRepository);
+  updateRepositoryStatus();
   scheduleFilter();
 });
 function setFormatMode(mode) {
@@ -902,6 +990,10 @@ function openColFilterPopover(col, anchorEl) {
   const input   = $('popover-input');
   if (!popover || !titleEl || !input) return;
 
+  // Popover must be inside the fullscreen element to be visible there
+  const host = document.fullscreenElement ?? document.body;
+  if (popover.parentElement !== host) host.appendChild(popover);
+
   _activeColFilter = col;
   titleEl.textContent = `Filter by ${COL_LABELS[col]}`;
 
@@ -1054,4 +1146,22 @@ $('clear')?.addEventListener('click', clearAll);
 // Initialise
 // ---------------------------------------------------------------------------
 
+function restoreRepositoryMap() {
+  const saved = loadRepositoryFromStorage();
+  if (!saved?.jsonText) return;
+
+  try {
+    parseRepositoryJson(saved.jsonText);
+    if ($('repo-text')) $('repo-text').value = saved.jsonText;
+    if ($('filter-by-repository')) {
+      $('filter-by-repository').checked = !!saved.filterEnabled;
+      state.filterByRepository = !!saved.filterEnabled;
+    }
+    updateRepositoryStatus();
+  } catch (err) {
+    console.warn('[Logalizer] Could not restore repository map:', err);
+  }
+}
+
+restoreRepositoryMap();
 renderLibrary();

@@ -1,4 +1,5 @@
 import { DOMAIN_RULES } from './config.js';
+import { isInRepository } from './repository-map.js';
 
 export function compileSearch(query, caseSensitive) {
   if (!query || !query.trim()) return { regex: null, error: null };
@@ -19,7 +20,7 @@ function fieldForCol(record, col) {
   return '';
 }
 
-export function filterRecords(records, state, repoClasses, liveQuery = '') {
+export function filterRecords(records, state, liveQuery = '') {
   const searchRules = (state.searchTags || [])
     .filter(tag => tag.enabled)
     .map(tag => tag.regex)
@@ -56,8 +57,8 @@ export function filterRecords(records, state, repoClasses, liveQuery = '') {
       }
     }
 
-    if (state.domains?.repository) {
-      if (!matchesRepository(record.component, repoClasses)) {
+    if (state.filterByRepository) {
+      if (!isInRepository(record.component)) {
         return false;
       }
     }
@@ -81,12 +82,6 @@ export function filterRecords(records, state, repoClasses, liveQuery = '') {
 
     return true;
   });
-}
-
-function matchesRepository(component, classes) {
-  if (!component || !classes || !classes.size) return false;
-  const simple = component.split('.').pop();
-  return classes.has(component) || classes.has(simple);
 }
 
 

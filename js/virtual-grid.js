@@ -15,6 +15,8 @@
  */
 
 import { APP_CONFIG } from './config.js';
+import { getComponentColor } from './repository-map.js';
+import { subtleBackground } from './color-utils.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,6 +55,7 @@ export class VirtualGrid {
     this.patternHighlights = [];  // gold — from the Highlight section
     this.selectedLine     = null;
     this._frame           = 0;    // rAF handle
+    this._pidColors       = new Map(); // pid string → hsl color
 
     // Re-render on scroll
     scrollContainer.addEventListener('scroll', () => this.schedule());
@@ -86,9 +89,11 @@ export class VirtualGrid {
       this.spacer.style.height = `${this.records.length * APP_CONFIG.rowHeight}px`;
     }
 
-    // Update CSS variable used by header + rows for min-width
+    // Set width on .grid-card-inner so sibling .grid-head inherits --grid-width
     const width = this._estimateWidth(this.records);
-    this.container.style.setProperty('--grid-width', `${width}px`);
+    const cardInner = this.container.closest('.grid-card-inner');
+    const widthHost = cardInner ?? this.container;
+    widthHost.style.setProperty('--grid-width', `${width}px`);
 
     // Reset scroll to top
     this.container.scrollTop = 0;
@@ -170,13 +175,17 @@ export class VirtualGrid {
     const [date = '', time = ''] = (r.timestamp ?? '').split(' ');
     const [pid  = '', tid  = ''] = (r.pidTid    ?? '').split('/');
     const selected = r.line === this.selectedLine ? ' is-selected' : '';
+    const pidStyle = pid ? ` style="color:${this._pidColor(pid)}"` : '';
+    const compColor = getComponentColor(r.component);
+    const rowBg = compColor ? subtleBackground(compColor, 0.2) : '';
+    const rowStyle = rowBg ? ` style="--row-bg:${rowBg}"` : '';
 
     return (
-      `<div data-index="${index}" class="log-row grid-row${selected}" title="${escapeHtml(r.raw)}">` +
+      `<div data-index="${index}" class="log-row grid-row${selected}${rowBg ? ' has-comp-bg' : ''}"${rowStyle} title="${escapeHtml(r.raw)}">` +
         `<span class="line-number">${r.line}</span>` +
         `<span class="timestamp"><em>${this._hl(date)}</em> <strong>${this._hl(time)}</strong></span>` +
         `<span class="level-${r.level ?? '?'}">${r.level ?? '?'}</span>` +
-        `<span class="pid pid-${this._pidColor(pid)}">${this._hl(pid)}<i>${tid ? `/${this._hl(tid)}` : ''}</i></span>` +
+        `<span class="pid"${pidStyle}>${this._hl(pid)}<i>${tid ? `/${this._hl(tid)}` : ''}</i></span>` +
         `<span class="component">${this._hl(r.component)}</span>` +
         `<span class="message">${this._hl(r.message)}</span>` +
       `</div>`
@@ -234,10 +243,15 @@ export class VirtualGrid {
   // Private — utilities
   // ---------------------------------------------------------------------------
 
+  /** Assign a distinct HSL color per unique PID (golden-angle spacing). */
   _pidColor(pid) {
-    let hash = 0;
-    for (const ch of String(pid)) hash = ((hash * 31) + ch.charCodeAt(0)) | 0;
-    return Math.abs(hash) % 8;
+    const key = String(pid);
+    if (!this._pidColors.has(key)) {
+      const idx = this._pidColors.size;
+      const hue = Math.round((idx * 137.508) % 360);
+      this._pidColors.set(key, `hsl(${hue}, 72%, 72%)`);
+    }
+    return this._pidColors.get(key);
   }
 
   _estimateWidth(records) {
