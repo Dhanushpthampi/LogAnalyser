@@ -22,11 +22,21 @@
       <div class="workspace">
         <aside id="sidebar" class="sidebar" aria-label="Log analyzer controls">
           <section class="side-section">
-            <h2>Log source</h2>
+            <h2>Log format mode</h2>
+            <div id="format-toggle-group" class="segmented-control" role="group" aria-label="Log format mode toggle">
+              <button type="button" class="segment-btn is-active" data-format="AUTO" title="Auto-detect format per line">Auto-detect</button>
+              <button type="button" class="segment-btn" data-format="DLT" title="Force DLT Automotive Log mode">DLT Logs</button>
+              <button type="button" class="segment-btn" data-format="LOGCAT" title="Force Android Logcat mode">Logcat Logs</button>
+            </div>
+            <select id="log-format" hidden>
+              <option value="AUTO">Auto-detect (DLT / Logcat)</option>
+              <option value="DLT">DLT Automotive Format</option>
+              <option value="LOGCAT">Android Logcat Format</option>
+            </select>
             <label class="file-drop" id="log-drop-zone">
               <input id="log-file" type="file" accept=".log,.txt,.dlt,text/plain" />
               <strong>Open log file</strong>
-              <span>Drop or select a logcat file</span>
+              <span>Drop or select a Logcat or DLT file</span>
             </label>
             <label class="check save-option"><input id="auto-save" type="checkbox" checked /> Save imports to this browser</label>
             <p class="side-empty">Paste and edit text in the Raw Log Editor workspace.</p>
@@ -102,16 +112,16 @@
               </div>
             </header>
             <div class="top-pane-content">
-              <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste adb logcat output here. Parsed results below update immediately."></textarea>
+              <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste Logcat or DLT log output here. Parsed results below update immediately."></textarea>
               <div id="all-grid-card" class="grid-card-inner" hidden>
                 <!-- Header sits OUTSIDE log-grid so position:absolute rows don't cover line 1 -->
-                <div class="grid-head grid-row" aria-hidden="true">
+                <div class="grid-head grid-row">
                   <span>LINE</span>
-                  <span>TIME</span>
-                  <span>LVL</span>
-                  <span>PID/TID</span>
-                  <span>COMPONENT</span>
-                  <span>MESSAGE</span>
+                  <span class="col-filter-btn" data-col="time" title="Click to filter by Time">TIME <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="lvl" title="Click to filter by Level">LVL <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="pidTid" title="Click to filter by PID/TID">PID/TID <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="component" title="Click to filter by Component">COMPONENT <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="message" title="Click to filter by Message">MESSAGE <i class="filter-indicator">▾</i></span>
                 </div>
                 <div id="all-log-grid" class="log-grid" tabindex="0" aria-label="All log lines">
                   <div id="all-grid-spacer"></div>
@@ -138,13 +148,13 @@
             </header>
             <div class="grid-card-inner">
               <!-- Header sits OUTSIDE log-grid so position:absolute rows don't cover line 1 -->
-              <div class="grid-head grid-row" aria-hidden="true">
+              <div class="grid-head grid-row">
                 <span>LINE</span>
-                <span>TIME</span>
-                <span>LVL</span>
-                <span>PID/TID</span>
-                <span>COMPONENT</span>
-                <span>MESSAGE</span>
+                <span class="col-filter-btn" data-col="time" title="Click to filter by Time">TIME <i class="filter-indicator">▾</i></span>
+                <span class="col-filter-btn" data-col="lvl" title="Click to filter by Level">LVL <i class="filter-indicator">▾</i></span>
+                <span class="col-filter-btn" data-col="pidTid" title="Click to filter by PID/TID">PID/TID <i class="filter-indicator">▾</i></span>
+                <span class="col-filter-btn" data-col="component" title="Click to filter by Component">COMPONENT <i class="filter-indicator">▾</i></span>
+                <span class="col-filter-btn" data-col="message" title="Click to filter by Message">MESSAGE <i class="filter-indicator">▾</i></span>
               </div>
               <div id="filtered-log-grid" class="log-grid" tabindex="0" aria-label="Filtered log lines">
                 <div id="filtered-grid-spacer"></div>
@@ -156,6 +166,22 @@
         </section>
       </div>
     </main>
+
+    <!-- Column Header Filter Popover -->
+    <div id="header-filter-popover" class="header-filter-popover" hidden>
+      <div class="popover-title-bar">
+        <span id="popover-title">Filter Column</span>
+        <button id="popover-close" type="button" class="popover-close-btn" title="Close">&times;</button>
+      </div>
+      <div class="popover-body">
+        <input id="popover-input" type="search" placeholder="Type to filter options..." autocomplete="off" spellcheck="false" />
+        <div id="popover-options" class="popover-options-list"></div>
+      </div>
+      <div class="popover-footer">
+        <button id="popover-clear" type="button" class="button button--small button--danger">Clear Column Filter</button>
+      </div>
+    </div>
+
     <script type="module" src="js/app.js"></script>
   </body>
 </html>

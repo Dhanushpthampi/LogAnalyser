@@ -9,6 +9,16 @@ export function compileSearch(query, caseSensitive) {
   }
 }
 
+/** Get the record field value for a given column key */
+function fieldForCol(record, col) {
+  if (col === 'lvl')       return record.level      || '';
+  if (col === 'component') return record.component  || '';
+  if (col === 'pidTid')    return record.pidTid     || '';
+  if (col === 'time')      return record.timestamp  || '';
+  if (col === 'message')   return record.message    || '';
+  return '';
+}
+
 export function filterRecords(records, state, repoClasses, liveQuery = '') {
   const searchRules = (state.searchTags || [])
     .filter(tag => tag.enabled)
@@ -21,8 +31,23 @@ export function filterRecords(records, state, repoClasses, liveQuery = '') {
   }
 
   const enabledDomains = Object.keys(DOMAIN_RULES).filter(key => state.domains && state.domains[key]);
+  const colFilters = state.columnFilters || {};
+  const colFilterEntries = Object.entries(colFilters).filter(([, f]) => f);
 
   return records.filter(record => {
+    // --- Column filters (multi-select values OR regex) ---
+    for (const [col, filter] of colFilterEntries) {
+      const fieldVal = fieldForCol(record, col);
+
+      if (filter.type === 'values' && filter.values.length > 0) {
+        // OR logic: record must match at least one selected value
+        if (!filter.values.includes(fieldVal)) return false;
+      } else if (filter.type === 'regex' && filter.regex) {
+        filter.regex.lastIndex = 0;
+        if (!filter.regex.test(fieldVal)) return false;
+      }
+    }
+
     const haystack = `${record.component} ${record.message} ${record.raw}`;
 
     if (enabledDomains.length > 0) {
@@ -63,4 +88,5 @@ function matchesRepository(component, classes) {
   const simple = component.split('.').pop();
   return classes.has(component) || classes.has(simple);
 }
+
 

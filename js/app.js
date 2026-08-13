@@ -34,12 +34,14 @@ const filteredGrid = new VirtualGrid($('filtered-log-grid'), onRowSelect);
 // ---------------------------------------------------------------------------
 
 const state = {
-  topView:      'raw',   // 'raw' | 'all'
-  invertSearch: false,
+  topView:       'raw',   // 'raw' | 'all'
+  invertSearch:  false,
   caseSensitive: false,
-  level:        '',
-  searchTags:   [],      // { id, label, global, regex, enabled }[]
-  highlights:   [],      // { id, label, global, regex, enabled }[]
+  level:         '',
+  formatMode:    'AUTO',  // 'AUTO' | 'DLT' | 'LOGCAT'
+  columnFilters: {},      // { lvl, component, pidTid, message, time }
+  searchTags:    [],      // { id, label, global, regex, enabled }[]
+  highlights:    [],      // { id, label, global, regex, enabled }[]
 };
 
 // ---------------------------------------------------------------------------
@@ -106,8 +108,10 @@ function pushHighlightsToGrids() {
 // ---------------------------------------------------------------------------
 
 function applyView() {
-  const liveQuery = $('search')?.value ?? '';
-  const filtered  = filterRecords(store.lines, state, repositoryClasses, liveQuery);
+  const sidebarSearch = $('search')?.value ?? '';
+  const quickSearch   = $('quick-filter-input')?.value ?? '';
+  const liveQuery     = [sidebarSearch, quickSearch].filter(Boolean).join(' ');
+  const filtered      = filterRecords(store.lines, state, repositoryClasses, liveQuery);
 
   allGrid.setRecords(store.lines);
   filteredGrid.setRecords(filtered);
@@ -133,6 +137,8 @@ function scheduleFilter() {
 
 function parseEditorText() {
   const text = $('log-text')?.value ?? '';
+  const formatMode = $('log-format')?.value ?? state.formatMode ?? 'AUTO';
+  state.formatMode = formatMode;
   abortController?.abort();
   store.clear();
 
@@ -147,7 +153,7 @@ function parseEditorText() {
   const rawLines = text.split(/\r?\n/);
   const parsed   = rawLines
     .filter((line, i) => line || i < rawLines.length - 1)   // keep all except trailing empty
-    .map((raw, i) => parseLine(raw, i + 1));
+    .map((raw, i) => parseLine(raw, i + 1, formatMode));
 
   store.append(parsed);
 
@@ -170,7 +176,6 @@ function scheduleEditorParse() {
 // ---------------------------------------------------------------------------
 
 function onRowSelect(record) {
-  // If user is on the "All Retained Lines" tab, switch back to Raw so they can see the line
   if (state.topView !== 'raw') {
     switchTopView('raw');
   }
@@ -182,18 +187,31 @@ function onRowSelect(record) {
   }
 
   const lines     = editor.value.split('\n');
-  const lineIndex = Math.max(0, record.line - 1);
+  let lineIndex = Math.max(0, record.line - 1);
+
+  // Fallback search if index is out of bounds or content mismatched
+  if (lineIndex >= lines.length || (record.raw && !lines[lineIndex].includes(record.raw.trim().slice(0, 25)))) {
+    const foundIndex = lines.findIndex(l => record.raw && l.trim() === record.raw.trim());
+    if (foundIndex !== -1) lineIndex = foundIndex;
+  }
+
   if (lineIndex >= lines.length) return;
 
-  // Calculate character offset of the target line
+  // Calculate character offset of target line
   let charStart = 0;
   for (let i = 0; i < lineIndex; i++) charStart += lines[i].length + 1;
   const charEnd = charStart + lines[lineIndex].replace(/\r$/, '').length;
 
   editor.focus();
   editor.setSelectionRange(charStart, charEnd);
-  editor.scrollTop = Math.max(0, (lineIndex - 3) * 18);
-  setStatus(`Selected raw line ${record.line}`);
+
+  // Center target line smoothly in editor scroll window
+  const estimatedLineH = 18;
+  const targetTop = Math.max(0, lineIndex * estimatedLineH - editor.clientHeight / 2);
+  editor.scrollTop = targetTop;
+
+  const lineDisplay = record.logLine ? `${record.line} (Log line ${record.logLine})` : `${record.line}`;
+  setStatus(`Selected raw line ${lineDisplay}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -214,12 +232,14 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
   setStatus(`Reading ${displayName}…`, 'loading');
 
   let nextLineNumber = 1;
+  const formatMode = $('log-format')?.value ?? state.formatMode ?? 'AUTO';
+  state.formatMode = formatMode;
 
   try {
     await streamLines(
       source,
       async chunk => {
-        store.append(chunk.map(raw => parseLine(raw, nextLineNumber++)));
+        store.append(chunk.map(raw => parseLine(raw, nextLineNumber++, formatMode)));
         updateMetrics();
         await new Promise(requestAnimationFrame);
       },
@@ -494,16 +514,19 @@ function clearAll() {
   const logText = $('log-text');
   if (logText) logText.value = '';
   if ($('level-filter')) $('level-filter').value = '';
+  setFormatMode('AUTO');
   const editorMode = $('editor-mode');
-  if (editorMode) editorMode.textContent = 'Paste logcat here — changes are parsed automatically';
+  if (editorMode) editorMode.textContent = 'Paste Logcat or DLT logs here — changes are parsed automatically';
 
   // Reset state
-  state.topView       = 'raw';
-  state.invertSearch  = false;
-  state.caseSensitive = false;
-  state.level         = '';
-  state.searchTags    = [];
-  state.highlights    = [];
+  state.topView        = 'raw';
+  state.invertSearch   = false;
+  state.caseSensitive  = false;
+  state.level          = '';
+  state.columnFilters  = {};
+  state.searchTags     = [];
+  state.highlights     = [];
+  updateColFilterIndicators();
 
   switchTopView('raw');
 
@@ -636,6 +659,379 @@ $('level-filter')?.addEventListener('change', e => {
   state.level = e.target.value;
   scheduleFilter();
 });
+function setFormatMode(mode) {
+  state.formatMode = mode;
+  if ($('log-format')) $('log-format').value = mode;
+
+  document.querySelectorAll('#format-toggle-group .segment-btn').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.format === mode);
+  });
+
+  const modeLabels = { AUTO: 'Auto-detect', DLT: 'DLT Automotive', LOGCAT: 'Android Logcat' };
+  setStatus(`Log format mode: ${modeLabels[mode] ?? mode}`);
+
+  if ($('log-text')?.value.trim()) {
+    parseEditorText();
+  }
+}
+
+$('log-format')?.addEventListener('change', e => {
+  setFormatMode(e.target.value);
+});
+
+document.querySelectorAll('#format-toggle-group .segment-btn').forEach(btn => {
+  btn.addEventListener('click', () => setFormatMode(btn.dataset.format));
+});
+
+// ---------------------------------------------------------------------------
+// Quick Filter & Auto-complete Dropdown
+// ---------------------------------------------------------------------------
+
+function renderQuickDropdown(query = '') {
+  const dropdown = $('quick-filter-dropdown');
+  if (!dropdown) return;
+
+  if (!store.lines.length) {
+    dropdown.hidden = true;
+    return;
+  }
+
+  const q = query.trim().toLowerCase();
+
+  const components = new Map();
+  const levels     = new Map();
+  const pids       = new Map();
+
+  for (const r of store.lines) {
+    if (r.component)                           components.set(r.component, (components.get(r.component) || 0) + 1);
+    if (r.level && r.level !== '?')            levels.set(r.level, (levels.get(r.level) || 0) + 1);
+    if (r.pidTid)                              pids.set(r.pidTid, (pids.get(r.pidTid) || 0) + 1);
+  }
+
+  const levelNames = { V: 'Verbose', D: 'Debug', I: 'Info', W: 'Warning', E: 'Error', F: 'Fatal' };
+
+  const matchingComps = [...components.entries()]
+    .filter(([comp]) => !q || comp.toLowerCase().includes(q))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+
+  const matchingLevels = [...levels.entries()]
+    .filter(([lvl]) => !q || lvl.toLowerCase().includes(q) || (levelNames[lvl] && levelNames[lvl].toLowerCase().includes(q)))
+    .sort((a, b) => b[1] - a[1]);
+
+  const matchingPids = [...pids.entries()]
+    .filter(([pid]) => !q || pid.toLowerCase().includes(q))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  if (!matchingComps.length && !matchingLevels.length && !matchingPids.length) {
+    dropdown.hidden = true;
+    return;
+  }
+
+  let html = '';
+
+  if (matchingLevels.length) {
+    html += `<div class="dropdown-section-title">📊 Log Levels</div>`;
+    for (const [lvl, count] of matchingLevels) {
+      html += `<button type="button" class="dropdown-item" data-type="level" data-val="${lvl}">` +
+              `<span><strong class="item-badge level-${lvl}">${lvl}</strong> ${levelNames[lvl] || lvl}</span>` +
+              `<span class="item-count">${count.toLocaleString()}</span></button>`;
+    }
+  }
+
+  if (matchingComps.length) {
+    html += `<div class="dropdown-section-title">🏷️ Components</div>`;
+    for (const [comp, count] of matchingComps) {
+      html += `<button type="button" class="dropdown-item" data-type="component" data-val="${comp}">` +
+              `<span>${comp}</span>` +
+              `<span class="item-count">${count.toLocaleString()}</span></button>`;
+    }
+  }
+
+  if (matchingPids.length) {
+    html += `<div class="dropdown-section-title">🔢 Process / Thread IDs</div>`;
+    for (const [pid, count] of matchingPids) {
+      html += `<button type="button" class="dropdown-item" data-type="pid" data-val="${pid}">` +
+              `<span>PID/TID ${pid}</span>` +
+              `<span class="item-count">${count.toLocaleString()}</span></button>`;
+    }
+  }
+
+  dropdown.innerHTML = html;
+  dropdown.hidden = false;
+}
+
+const quickInput = $('quick-filter-input');
+const quickDropdown = $('quick-filter-dropdown');
+
+quickInput?.addEventListener('focus', () => renderQuickDropdown(quickInput?.value ?? ''));
+quickInput?.addEventListener('input', () => {
+  renderQuickDropdown(quickInput?.value ?? '');
+  scheduleFilter();
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.quick-filter-box')) {
+    if (quickDropdown) quickDropdown.hidden = true;
+  }
+});
+
+quickDropdown?.addEventListener('click', e => {
+  const item = e.target.closest('.dropdown-item');
+  if (!item) return;
+
+  const type = item.dataset.type;
+  const val  = item.dataset.val;
+
+  if (type === 'level') {
+    state.level = val;
+    if ($('level-filter')) $('level-filter').value = val;
+    setStatus(`Filtered by Log Level: ${val}`);
+  } else if (type === 'component') {
+    const flags = state.caseSensitive ? '' : 'i';
+    state.searchTags.push({
+      id: crypto.randomUUID(),
+      label: val,
+      global: false,
+      regex: new RegExp(`\\b${val}\\b`, flags),
+      enabled: true
+    });
+    renderRuleList('search-tag-list', state.searchTags, scheduleFilter);
+    setStatus(`Added Component filter tag: ${val}`);
+  } else if (type === 'pid') {
+    const flags = state.caseSensitive ? '' : 'i';
+    state.searchTags.push({
+      id: crypto.randomUUID(),
+      label: val,
+      global: false,
+      regex: new RegExp(val.replace('/', '[/\\s]'), flags),
+      enabled: true
+    });
+    renderRuleList('search-tag-list', state.searchTags, scheduleFilter);
+    setStatus(`Added PID filter tag: ${val}`);
+  }
+
+  if (quickInput) quickInput.value = '';
+  if (quickDropdown) quickDropdown.hidden = true;
+  scheduleFilter();
+});
+
+// ---------------------------------------------------------------------------
+// Column Header Filter Popover — multi-select values + regex
+// ---------------------------------------------------------------------------
+
+let _activeColFilter = null;
+
+const COL_LABELS = {
+  time:      'Time',
+  lvl:       'Level',
+  pidTid:    'PID / TID',
+  component: 'Component',
+  message:   'Message',
+};
+
+const LEVEL_NAMES = { V: 'V — Verbose', D: 'D — Debug', I: 'I — Info', W: 'W — Warning', E: 'E — Error', F: 'F — Fatal' };
+
+/** Return distinct values for a column, sorted by frequency */
+function getColValues(col) {
+  const counts = new Map();
+  for (const r of store.lines) {
+    let v = '';
+    if (col === 'lvl')       v = r.level     || '';
+    if (col === 'component') v = r.component  || '';
+    if (col === 'pidTid')    v = r.pidTid     || '';
+    if (col === 'time')      v = r.timestamp  || '';
+    if (col === 'message')   v = r.message    || '';
+    if (v) counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+/** Get the current selected values for a column (always an array) */
+function getSelectedValues(col) {
+  const f = state.columnFilters[col];
+  if (!f || f.type !== 'values') return [];
+  return f.values;
+}
+
+function renderPopoverOptions(col, query) {
+  const list = $('popover-options');
+  if (!list) return;
+
+  const q = query.trim().toLowerCase();
+  let entries = getColValues(col);
+  if (q) entries = entries.filter(([v]) => v.toLowerCase().includes(q));
+  entries = entries.slice(0, 40);
+
+  const selectedValues = getSelectedValues(col);
+
+  if (!entries.length) {
+    list.innerHTML = `<p style="color:var(--muted);font-size:.75rem;padding:6px 10px">No matching values${q ? ' — press Enter to apply as regex' : ''}</p>`;
+    return;
+  }
+
+  list.innerHTML = entries.map(([v, count]) => {
+    const label = col === 'lvl' ? (LEVEL_NAMES[v] || v) : v;
+    const checked = selectedValues.includes(v);
+    return `<button type="button" class="popover-option${checked ? ' is-active' : ''}" data-val="${v}">
+              <span class="pop-check">${checked ? '✓' : ''}</span>
+              <span class="pop-label">${label}</span>
+              <span class="pop-count">${count.toLocaleString()}</span>
+            </button>`;
+  }).join('');
+}
+
+function updatePopoverApplyBtn() {
+  const btn = $('popover-apply');
+  if (!btn || !_activeColFilter) return;
+  const count = getSelectedValues(_activeColFilter).length;
+  const f = state.columnFilters[_activeColFilter];
+  if (f?.type === 'regex') {
+    btn.textContent = `Regex: /${f.pattern}/`;
+  } else if (count > 0) {
+    btn.textContent = `${count} selected — Apply`;
+  } else {
+    btn.textContent = 'Apply';
+  }
+}
+
+function openColFilterPopover(col, anchorEl) {
+  const popover = $('header-filter-popover');
+  const titleEl = $('popover-title');
+  const input   = $('popover-input');
+  if (!popover || !titleEl || !input) return;
+
+  _activeColFilter = col;
+  titleEl.textContent = `Filter by ${COL_LABELS[col]}`;
+
+  // Pre-fill input if a regex filter is active
+  const existing = state.columnFilters[col];
+  input.value = (existing?.type === 'regex') ? (existing.pattern || '') : '';
+  input.placeholder = `Type to search, or press Enter to use as regex…`;
+  popover.hidden = false;
+
+  // Position under the clicked header
+  const rect = anchorEl.getBoundingClientRect();
+  const left = Math.min(rect.left, window.innerWidth - 290);
+  popover.style.left = `${Math.max(4, left)}px`;
+  popover.style.top  = `${rect.bottom + 4}px`;
+
+  renderPopoverOptions(col, '');
+  updatePopoverApplyBtn();
+  input.focus();
+}
+
+function closeColFilterPopover() {
+  const popover = $('header-filter-popover');
+  if (popover) popover.hidden = true;
+  _activeColFilter = null;
+}
+
+function updateColFilterIndicators() {
+  document.querySelectorAll('.col-filter-btn').forEach(btn => {
+    const col = btn.dataset.col;
+    const f   = state.columnFilters[col];
+    const active = f && ((f.type === 'values' && f.values.length > 0) || (f.type === 'regex' && f.pattern));
+    btn.classList.toggle('has-filter', !!active);
+    const ind = btn.querySelector('.filter-indicator');
+    if (!ind) return;
+    if (!active) { ind.textContent = '▾'; return; }
+    if (f.type === 'values') ind.textContent = `(${f.values.length}) ✕`;
+    else                     ind.textContent = `~/…/ ✕`;
+  });
+}
+
+// --- Column header click ---
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.col-filter-btn');
+  if (btn) {
+    const col = btn.dataset.col;
+    const ind = btn.querySelector('.filter-indicator');
+    // If clicking the indicator on an active filter → clear it
+    if (state.columnFilters[col] && e.target === ind) {
+      delete state.columnFilters[col];
+      updateColFilterIndicators();
+      scheduleFilter();
+      return;
+    }
+    e.stopPropagation();
+    if (_activeColFilter === col) {
+      closeColFilterPopover();
+    } else {
+      openColFilterPopover(col, btn);
+    }
+    return;
+  }
+  // Click outside → close
+  if (!e.target.closest('#header-filter-popover')) {
+    closeColFilterPopover();
+  }
+});
+
+// --- Popover input: live search + Enter for regex ---
+$('popover-input')?.addEventListener('input', e => {
+  if (_activeColFilter) renderPopoverOptions(_activeColFilter, e.target.value);
+});
+
+$('popover-input')?.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !_activeColFilter) return;
+  const raw = $('popover-input')?.value.trim() ?? '';
+  if (!raw) return;
+
+  try {
+    const regex = new RegExp(raw, 'i');
+    state.columnFilters[_activeColFilter] = { type: 'regex', pattern: raw, regex };
+    updateColFilterIndicators();
+    closeColFilterPopover();
+    scheduleFilter();
+    setStatus(`Column filter: /${raw}/ on ${COL_LABELS[_activeColFilter]}`);
+  } catch {
+    setStatus('Invalid regex — check your pattern', 'error');
+  }
+});
+
+// --- Option click: toggle item in multi-select list ---
+$('popover-options')?.addEventListener('click', e => {
+  const opt = e.target.closest('.popover-option');
+  if (!opt || !_activeColFilter) return;
+
+  const col = _activeColFilter;
+  const val = opt.dataset.val;
+
+  // Get or create the values filter for this column
+  let f = state.columnFilters[col];
+  if (!f || f.type !== 'values') {
+    f = { type: 'values', values: [] };
+    state.columnFilters[col] = f;
+  }
+
+  // Toggle value in/out of selection
+  const idx = f.values.indexOf(val);
+  if (idx === -1) {
+    f.values.push(val);
+  } else {
+    f.values.splice(idx, 1);
+    if (f.values.length === 0) delete state.columnFilters[col];
+  }
+
+  // Keep popover open, re-render options in place
+  renderPopoverOptions(col, $('popover-input')?.value ?? '');
+  updatePopoverApplyBtn();
+  updateColFilterIndicators();
+  scheduleFilter();
+});
+
+// --- Clear column filter button ---
+$('popover-clear')?.addEventListener('click', () => {
+  if (_activeColFilter) delete state.columnFilters[_activeColFilter];
+  updateColFilterIndicators();
+  closeColFilterPopover();
+  scheduleFilter();
+});
+
+// --- Close button ---
+$('popover-close')?.addEventListener('click', closeColFilterPopover);
 
 // --- Top-pane view tabs ---
 document.querySelectorAll('[data-top-view]').forEach(tab => {
