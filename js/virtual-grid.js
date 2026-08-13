@@ -3,15 +3,12 @@
  *
  * Architecture:
  *   .grid-card-inner  (flex column, overflow hidden)
- *     .grid-head      (sticky header, flex-shrink 0, outside scroll)
- *     .log-grid       (scroll container, flex 1, overflow auto)
- *       [spacer]      (invisible, sets total scroll height)
- *       [rows]        (absolute, translated to visible window)
- *       [empty-state] (shown when no records)
- *
- * The header lives OUTSIDE the scroll container so it never scrolls
- * vertically, but the whole .grid-card-inner can scroll horizontally
- * in sync because both header and log-grid share the same min-width.
+ *     .grid-vscroll    (scroll container — bars at pane edge)
+ *       .grid-head     (sticky column header)
+ *       .log-grid      (content viewport, no scroll)
+ *         [spacer]      (invisible, sets total scroll height)
+ *         [rows]        (absolute, translated to visible window)
+ *         [empty-state] (shown when no records)
  */
 
 import { APP_CONFIG } from './config.js';
@@ -44,6 +41,8 @@ export class VirtualGrid {
     if (!scrollContainer) throw new Error('VirtualGrid: scrollContainer is required');
 
     this.container = scrollContainer;
+    this.scrollEl  = scrollContainer.closest('.grid-vscroll') ?? scrollContainer;
+    this.headerEl  = this.scrollEl.querySelector('.grid-head');
 
     // Locate internal elements by id suffix pattern so multiple grids can coexist
     this.spacer = scrollContainer.querySelector('[id$="grid-spacer"]');
@@ -58,7 +57,7 @@ export class VirtualGrid {
     this._pidColors       = new Map(); // pid string → hsl color
 
     // Re-render on scroll
-    scrollContainer.addEventListener('scroll', () => this.schedule());
+    this.scrollEl.addEventListener('scroll', () => this.schedule());
 
     // Row click → select
     this.rows?.addEventListener('click', e => {
@@ -95,8 +94,9 @@ export class VirtualGrid {
     const widthHost = cardInner ?? this.container;
     widthHost.style.setProperty('--grid-width', `${width}px`);
 
-    // Reset scroll to top
-    this.container.scrollTop = 0;
+    // Reset scroll to top-left
+    this.scrollEl.scrollTop = 0;
+    this.scrollEl.scrollLeft = 0;
 
     this.schedule();
   }
@@ -116,11 +116,17 @@ export class VirtualGrid {
   scrollToLine(lineNumber) {
     const index = this.records.findIndex(r => r.line === lineNumber);
     if (index < 0) return;
-    const targetScrollTop = index * APP_CONFIG.rowHeight;
-    const { scrollTop, clientHeight } = this.container;
-    const isVisible = targetScrollTop >= scrollTop && targetScrollTop + APP_CONFIG.rowHeight <= scrollTop + clientHeight;
+    const rowH = APP_CONFIG.rowHeight;
+    const headerH = this._headerHeight();
+    const targetScrollTop = index * rowH + headerH;
+    const { scrollTop, clientHeight } = this.scrollEl;
+    const viewTop = Math.max(headerH, scrollTop);
+    const viewBottom = scrollTop + clientHeight;
+    const rowTop = targetScrollTop;
+    const rowBottom = targetScrollTop + rowH;
+    const isVisible = rowTop >= viewTop && rowBottom <= viewBottom;
     if (!isVisible) {
-      this.container.scrollTop = Math.max(0, targetScrollTop - clientHeight / 2);
+      this.scrollEl.scrollTop = Math.max(0, targetScrollTop - (clientHeight - headerH) / 2);
     }
     this.schedule();
   }
@@ -150,12 +156,15 @@ export class VirtualGrid {
       return;
     }
 
-    const { scrollTop, clientHeight } = this.container;
+    const { scrollTop, clientHeight } = this.scrollEl;
     const overscan = APP_CONFIG.renderOverscan;
     const rowH     = APP_CONFIG.rowHeight;
+    const headerH  = this._headerHeight();
+    const contentScrollTop = Math.max(0, scrollTop - headerH);
+    const visibleH = Math.max(rowH, clientHeight - headerH);
 
-    const start = Math.max(0, Math.floor(scrollTop / rowH) - overscan);
-    const end   = Math.min(count, start + Math.ceil(clientHeight / rowH) + overscan * 2);
+    const start = Math.max(0, Math.floor(contentScrollTop / rowH) - overscan);
+    const end   = Math.min(count, start + Math.ceil(visibleH / rowH) + overscan * 2);
 
     // Translate the rows div to align with the visible window
     if (this.rows) {
@@ -252,6 +261,10 @@ export class VirtualGrid {
       this._pidColors.set(key, `hsl(${hue}, 72%, 72%)`);
     }
     return this._pidColors.get(key);
+  }
+
+  _headerHeight() {
+    return this.headerEl?.offsetHeight ?? 0;
   }
 
   _estimateWidth(records) {

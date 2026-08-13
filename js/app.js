@@ -290,6 +290,20 @@ function scheduleEditorParse() {
   });
 }
 
+function updateRawEditorGutter() {
+  const editor = $('log-text');
+  const gutter = $('raw-editor-gutter');
+  if (!editor || !gutter) return;
+  const count = Math.max(1, editor.value.split('\n').length);
+  gutter.textContent = Array.from({ length: count }, (_, i) => i + 1).join('\n');
+}
+
+function syncRawEditorGutterScroll() {
+  const editor = $('log-text');
+  const gutter = $('raw-editor-gutter');
+  if (editor && gutter) gutter.scrollTop = editor.scrollTop;
+}
+
 // ---------------------------------------------------------------------------
 // Row selection — jump to raw editor line
 // ---------------------------------------------------------------------------
@@ -328,6 +342,7 @@ function onRowSelect(record) {
   const estimatedLineH = 18;
   const targetTop = Math.max(0, lineIndex * estimatedLineH - editor.clientHeight / 2);
   editor.scrollTop = targetTop;
+  syncRawEditorGutterScroll();
 
   const lineDisplay = record.logLine ? `${record.line} (Log line ${record.logLine})` : `${record.line}`;
   setStatus(`Selected raw line ${lineDisplay}`);
@@ -467,6 +482,7 @@ async function renderLibrary() {
           editorLibraryId = record.id;
           const modeEl = $('editor-mode');
           if (modeEl) modeEl.textContent = `Saved log: ${record.name}`;
+          updateRawEditorGutter();
           parseEditorText();
         } catch (err) {
           setStatus(`Could not open saved log: ${err.message}`, 'error');
@@ -610,7 +626,7 @@ function switchTopView(view) {
     tab.classList.toggle('is-active', tab.dataset.topView === view);
   });
 
-  if ($('log-text'))     $('log-text').hidden     = !isRaw;
+  if ($('raw-editor-wrap')) $('raw-editor-wrap').hidden = !isRaw;
   if ($('all-grid-card')) $('all-grid-card').hidden = isRaw;
 
   // Trigger a render pass when switching to the grid view
@@ -642,6 +658,7 @@ function clearAll() {
   });
   const logText = $('log-text');
   if (logText) logText.value = '';
+  updateRawEditorGutter();
   if ($('level-filter')) $('level-filter').value = '';
   setFormatMode('AUTO');
   const editorMode = $('editor-mode');
@@ -815,6 +832,7 @@ async function restoreSession() {
 
     if (restoredText && $('log-text')) {
       $('log-text').value = restoredText;
+      updateRawEditorGutter();
       parseEditorText();
       const modeEl = $('editor-mode');
       if (modeEl && saved.editorMode) modeEl.textContent = saved.editorMode;
@@ -922,7 +940,12 @@ wireDrop('log-drop-zone',  loadLog);
 wireDrop('repo-drop-zone', loadRepositoryFile);
 
 // --- Textarea editor ---
-$('log-text')?.addEventListener('input', scheduleEditorParse);
+$('log-text')?.addEventListener('input', () => {
+  updateRawEditorGutter();
+  scheduleEditorParse();
+});
+$('log-text')?.addEventListener('scroll', syncRawEditorGutterScroll);
+updateRawEditorGutter();
 
 // --- Repository map text ---
 $('import-repo-text')?.addEventListener('click', () => {

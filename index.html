@@ -115,21 +115,25 @@
               </div>
             </header>
             <div class="top-pane-content">
-              <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste Logcat or DLT log output here. Parsed results below update immediately."></textarea>
+              <div id="raw-editor-wrap" class="raw-editor-wrap">
+                <div id="raw-editor-gutter" class="raw-editor-gutter" aria-hidden="true">1</div>
+                <textarea id="log-text" class="raw-editor" spellcheck="false" placeholder="Paste Logcat or DLT log output here. Parsed results below update immediately."></textarea>
+              </div>
               <div id="all-grid-card" class="grid-card-inner" hidden>
-                <!-- Header sits OUTSIDE log-grid so position:absolute rows don't cover line 1 -->
-                <div class="grid-head grid-row">
-                  <span>LINE</span>
-                  <span class="col-filter-btn" data-col="time" title="Click to filter by Time">TIME <i class="filter-indicator">▾</i></span>
-                  <span class="col-filter-btn" data-col="lvl" title="Click to filter by Level">LVL <i class="filter-indicator">▾</i></span>
-                  <span class="col-filter-btn" data-col="pidTid" title="Click to filter by PID/TID">PID/TID <i class="filter-indicator">▾</i></span>
-                  <span class="col-filter-btn" data-col="component" title="Click to filter by Component">COMPONENT <i class="filter-indicator">▾</i></span>
-                  <span class="col-filter-btn" data-col="message" title="Click to filter by Message">MESSAGE <i class="filter-indicator">▾</i></span>
-                </div>
-                <div id="all-log-grid" class="log-grid" tabindex="0" aria-label="All log lines">
-                  <div id="all-grid-spacer"></div>
-                  <div id="all-grid-rows"></div>
-                  <p id="all-empty-state" class="empty-state">No log lines retained.</p>
+                <div class="grid-vscroll">
+                  <div class="grid-head grid-row">
+                    <span>LINE</span>
+                    <span class="col-filter-btn" data-col="time" title="Click to filter by Time">TIME <i class="filter-indicator">▾</i></span>
+                    <span class="col-filter-btn" data-col="lvl" title="Click to filter by Level">LVL <i class="filter-indicator">▾</i></span>
+                    <span class="col-filter-btn" data-col="pidTid" title="Click to filter by PID/TID">PID/TID <i class="filter-indicator">▾</i></span>
+                    <span class="col-filter-btn" data-col="component" title="Click to filter by Component">COMPONENT <i class="filter-indicator">▾</i></span>
+                    <span class="col-filter-btn" data-col="message" title="Click to filter by Message">MESSAGE <i class="filter-indicator">▾</i></span>
+                  </div>
+                  <div id="all-log-grid" class="log-grid" tabindex="0" aria-label="All log lines">
+                    <div id="all-grid-spacer"></div>
+                    <div id="all-grid-rows"></div>
+                    <p id="all-empty-state" class="empty-state">No log lines retained.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -150,19 +154,20 @@
               </div>
             </header>
             <div class="grid-card-inner">
-              <!-- Header sits OUTSIDE log-grid so position:absolute rows don't cover line 1 -->
-              <div class="grid-head grid-row">
-                <span>LINE</span>
-                <span class="col-filter-btn" data-col="time" title="Click to filter by Time">TIME <i class="filter-indicator">▾</i></span>
-                <span class="col-filter-btn" data-col="lvl" title="Click to filter by Level">LVL <i class="filter-indicator">▾</i></span>
-                <span class="col-filter-btn" data-col="pidTid" title="Click to filter by PID/TID">PID/TID <i class="filter-indicator">▾</i></span>
-                <span class="col-filter-btn" data-col="component" title="Click to filter by Component">COMPONENT <i class="filter-indicator">▾</i></span>
-                <span class="col-filter-btn" data-col="message" title="Click to filter by Message">MESSAGE <i class="filter-indicator">▾</i></span>
-              </div>
-              <div id="filtered-log-grid" class="log-grid" tabindex="0" aria-label="Filtered log lines">
-                <div id="filtered-grid-spacer"></div>
-                <div id="filtered-grid-rows"></div>
-                <p id="filtered-empty-state" class="empty-state">Paste logcat text or load a log file to begin.</p>
+              <div class="grid-vscroll">
+                <div class="grid-head grid-row">
+                  <span>LINE</span>
+                  <span class="col-filter-btn" data-col="time" title="Click to filter by Time">TIME <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="lvl" title="Click to filter by Level">LVL <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="pidTid" title="Click to filter by PID/TID">PID/TID <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="component" title="Click to filter by Component">COMPONENT <i class="filter-indicator">▾</i></span>
+                  <span class="col-filter-btn" data-col="message" title="Click to filter by Message">MESSAGE <i class="filter-indicator">▾</i></span>
+                </div>
+                <div id="filtered-log-grid" class="log-grid" tabindex="0" aria-label="Filtered log lines">
+                  <div id="filtered-grid-spacer"></div>
+                  <div id="filtered-grid-rows"></div>
+                  <p id="filtered-empty-state" class="empty-state">Paste logcat text or load a log file to begin.</p>
+                </div>
               </div>
             </div>
           </section>
