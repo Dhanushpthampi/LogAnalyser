@@ -222,9 +222,22 @@ async function copyToClipboard(text) {
   }
 }
 
+function getOverlayHost() {
+  return document.fullscreenElement ?? document.body;
+}
+
+function attachOverlayToHost(el) {
+  if (!el) return;
+  const host = getOverlayHost();
+  if (el.parentElement !== host) host.appendChild(el);
+}
+
 function hideLineContextMenu() {
   const menu = $('line-context-menu');
-  if (menu) menu.hidden = true;
+  if (menu) {
+    menu.hidden = true;
+    if (menu.parentElement !== document.body) document.body.appendChild(menu);
+  }
   contextMenuRecord = null;
 }
 
@@ -234,6 +247,8 @@ function showLineContextMenu(e, record) {
 
   e.preventDefault();
   contextMenuRecord = record;
+
+  attachOverlayToHost(menu);
 
   const marked = isLineMarked(record.line);
   menu.querySelector('[data-action="mark"]').hidden = marked;
@@ -1076,14 +1091,17 @@ document.querySelectorAll('.pane-fullscreen').forEach(btn => {
   });
 });
 
-// Return filter popover to body when exiting fullscreen
+// Return overlays to body when exiting fullscreen
 document.addEventListener('fullscreenchange', () => {
   const popover = $('header-filter-popover');
-  if (!popover) return;
-  if (!document.fullscreenElement && popover.parentElement !== document.body) {
-    document.body.appendChild(popover);
+  const menu = $('line-context-menu');
+
+  if (!document.fullscreenElement) {
+    if (popover && popover.parentElement !== document.body) document.body.appendChild(popover);
+    hideLineContextMenu();
   }
-  if (_activeColFilter && !popover.hidden) {
+
+  if (popover && _activeColFilter && !popover.hidden) {
     const btn = document.querySelector(`.col-filter-btn[data-col="${_activeColFilter}"]`);
     if (btn) openColFilterPopover(_activeColFilter, btn);
   }
@@ -1441,8 +1459,7 @@ function openColFilterPopover(col, anchorEl) {
   if (!popover || !titleEl || !input) return;
 
   // Popover must be inside the fullscreen element to be visible there
-  const host = document.fullscreenElement ?? document.body;
-  if (popover.parentElement !== host) host.appendChild(popover);
+  attachOverlayToHost(popover);
 
   _activeColFilter = col;
   titleEl.textContent = `Filter by ${COL_LABELS[col]}`;
