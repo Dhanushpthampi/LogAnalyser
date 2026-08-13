@@ -60,6 +60,8 @@ const state = {
 let abortController = null;  // for cancelling streaming imports
 let filterTimer     = 0;     // debounce timeout for filter changes
 let editorFrame     = 0;     // rAF handle for editor parse scheduling
+let editorSaveTimer = 0;     // debounce timeout for library saves from editor
+let editorLibraryId = null;  // IndexedDB id for the active editor session
 
 // ---------------------------------------------------------------------------
 // Status bar
@@ -214,6 +216,7 @@ function parseEditorText() {
   store.clear();
 
   if (!text.trim()) {
+    editorLibraryId = null;
     allGrid.setRecords([]);
     filteredGrid.setRecords([]);
     updateMetrics();
@@ -232,6 +235,44 @@ function parseEditorText() {
   if (editorMode) editorMode.textContent = `Live editor — ${store.totalRead.toLocaleString()} lines parsed`;
 
   applyView();
+  scheduleEditorSave();
+}
+
+function scheduleEditorSave() {
+  if (!$('auto-save')?.checked) return;
+  clearTimeout(editorSaveTimer);
+  editorSaveTimer = setTimeout(saveEditorToLibrary, 1500);
+}
+
+async function saveEditorToLibrary() {
+  if (!$('auto-save')?.checked) return;
+
+  const text = $('log-text')?.value ?? '';
+  if (!text.trim()) return;
+
+  const blob = new Blob([text], { type: 'text/plain' });
+
+  try {
+    if (editorLibraryId) {
+      await library.update(editorLibraryId, {
+        blob,
+        size: blob.size,
+        savedAt: Date.now(),
+      });
+    } else {
+      const name = `Pasted log · ${new Date().toLocaleString()}`;
+      const item = await library.save(name, blob);
+      editorLibraryId = item.id;
+      const modeEl = $('editor-mode');
+      if (modeEl && !modeEl.textContent.startsWith('Loading')) {
+        modeEl.textContent = `Saved log: ${name}`;
+      }
+    }
+    await renderLibrary();
+  } catch (err) {
+    console.warn('[Logalizer] Editor save failed:', err);
+    setStatus(`Could not save to library: ${err.message}`, 'error');
+  }
 }
 
 function scheduleEditorParse() {
@@ -297,6 +338,10 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
   allGrid.setRecords([]);
   filteredGrid.setRecords([]);
   updateMetrics();
+  clearTimeout(editorSaveTimer);
+  editorLibraryId = null;
+  clearTimeout(editorSaveTimer);
+  editorLibraryId = null;
 
   const editorMode = $('editor-mode');
   if (editorMode) editorMode.textContent = `Loading ${displayName}…`;
@@ -305,6 +350,11 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
   let nextLineNumber = 1;
   const formatMode = $('log-format')?.value ?? state.formatMode ?? 'AUTO';
   state.formatMode = formatMode;
+
+  const shouldSave = save && $('auto-save')?.checked;
+  const blobToSave = shouldSave && source instanceof Blob
+    ? source.slice(0, source.size, source.type || 'text/plain')
+    : null;
 
   try {
     await streamLines(
@@ -325,9 +375,10 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
 
     applyView();
 
-    if (save && $('auto-save')?.checked) {
+    if (blobToSave) {
       try {
-        await library.save(displayName, source);
+        const item = await library.save(displayName, blobToSave);
+        editorLibraryId = item.id;
         await renderLibrary();
       } catch (err) {
         setStatus(`Imported OK but local save failed: ${err.message}`, 'error');
@@ -405,6 +456,7 @@ async function renderLibrary() {
         try {
           const editor = $('log-text');
           if (editor) editor.value = await record.blob.text();
+          editorLibraryId = record.id;
           const modeEl = $('editor-mode');
           if (modeEl) modeEl.textContent = `Saved log: ${record.name}`;
           parseEditorText();
@@ -433,6 +485,7 @@ async function renderLibrary() {
       deleteBtn.addEventListener('click', async () => {
         if (!confirm(`Delete "${log.name}"?`)) return;
         await library.remove(log.id);
+        if (editorLibraryId === log.id) editorLibraryId = null;
         renderLibrary();
       });
 
@@ -562,6 +615,8 @@ function switchTopView(view) {
 
 function clearAll() {
   abortController?.abort();
+  clearTimeout(editorSaveTimer);
+  editorLibraryId = null;
   store.clear();
   repositoryMap.clear();
   clearRepositoryStorage();
