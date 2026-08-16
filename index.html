@@ -75,6 +75,7 @@
 
           <section class="side-section">
             <h2>Highlight (does not filter)</h2>
+            <label class="check kpi-toggle"><input id="kpi-highlight" type="checkbox" /> Emphasize KPI markers <code>[KPI_...]</code></label>
             <div class="inline-add">
               <input id="highlight-pattern" type="text" autocomplete="off" placeholder="usbSlot|Exception" />
               <button id="add-highlight" class="button" type="button" title="Add highlight pattern">+</button>
@@ -180,12 +181,43 @@
       </div>
     </main>
 
-    <!-- Row context menu (mark / copy) -->
+    <!-- Row context menu (mark / command / copy) -->
     <div id="line-context-menu" class="line-context-menu" hidden>
       <button type="button" data-action="mark">Mark line</button>
       <button type="button" data-action="unmark" hidden>Unmark line</button>
+      <button type="button" data-action="add-command">Add command…</button>
+      <button type="button" data-action="edit-command" hidden>Edit command…</button>
+      <button type="button" data-action="copy-command" hidden>Copy command</button>
+      <button type="button" data-action="remove-command" hidden>Remove command</button>
       <button type="button" data-action="copy">Copy line</button>
       <button type="button" data-action="goto">Go to line in editor</button>
+    </div>
+
+    <!-- Line command dialog -->
+    <div id="line-command-dialog" class="line-command-dialog" hidden>
+      <div class="line-command-dialog-backdrop" data-action="cancel-command"></div>
+      <div class="line-command-dialog-panel" role="dialog" aria-labelledby="line-command-dialog-title">
+        <div id="line-command-dialog-title" class="line-command-dialog-title">Command for line <span id="line-command-line-num">—</span></div>
+        <p class="line-command-dialog-hint">Attach a shell/adb note or command to this line. It stays separate from the log text.</p>
+        <textarea id="line-command-input" spellcheck="false" placeholder="adb shell dumpsys activity activities"></textarea>
+        <div class="line-command-dialog-actions">
+          <button type="button" id="line-command-cancel" class="button">Cancel</button>
+          <button type="button" id="line-command-save" class="button">Save command</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line command viewer (double-click a command line) -->
+    <div id="line-command-viewer" class="line-command-viewer" hidden>
+      <div class="line-command-viewer-header">
+        <span class="line-command-viewer-title">⚡ Line <span id="line-command-view-line">—</span></span>
+        <button type="button" id="line-command-view-close" class="line-command-viewer-close" title="Close">&times;</button>
+      </div>
+      <pre id="line-command-view-text" class="line-command-viewer-body"></pre>
+      <div class="line-command-viewer-actions">
+        <button type="button" id="line-command-view-copy" class="button button--small">Copy</button>
+        <button type="button" id="line-command-view-edit" class="button button--small">Edit</button>
+      </div>
     </div>
 
     <!-- Column Header Filter Popover -->

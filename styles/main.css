@@ -569,6 +569,22 @@ body {
   box-shadow:   inset 0 0 0 1px rgba(255, 193, 7, 0.45), 0 0 12px rgba(255, 193, 7, 0.12);
 }
 
+.raw-editor-markers .command-band {
+  position:   absolute;
+  left:       0;
+  right:      0;
+  height:     18px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(86, 212, 221, 0.14),
+    rgba(86, 212, 221, 0.14) 5px,
+    rgba(127, 219, 202, 0.05) 5px,
+    rgba(127, 219, 202, 0.05) 10px
+  );
+  border-right: 4px solid #56d4dd;
+  box-shadow:   inset 0 0 0 1px rgba(86, 212, 221, 0.35), 0 0 10px rgba(86, 212, 221, 0.1);
+}
+
 .raw-editor {
   flex:        1;
   min-width:   0;
@@ -687,12 +703,52 @@ body {
     rgba(255, 152, 0, 0.04) 12px
   ) !important;
 }
+.log-row.has-command {
+  outline:        1px solid rgba(86, 212, 221, 0.55);
+  outline-offset: -1px;
+  box-shadow:
+    inset -5px 0 0 #56d4dd,
+    inset 0 0 0 1px rgba(86, 212, 221, 0.22),
+    0 0 12px rgba(86, 212, 221, 0.1);
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(86, 212, 221, 0.08),
+    rgba(86, 212, 221, 0.08) 6px,
+    rgba(127, 219, 202, 0.03) 6px,
+    rgba(127, 219, 202, 0.03) 12px
+  ) !important;
+  cursor:         pointer;
+}
+.log-row.is-marked.has-command {
+  box-shadow:
+    inset 5px 0 0 #ffc107,
+    inset -5px 0 0 #56d4dd,
+    inset 0 0 0 1px rgba(255, 193, 7, 0.25),
+    0 0 14px rgba(255, 193, 7, 0.12);
+}
 .log-row.is-marked.has-comp-bg:hover,
 .log-row.is-marked.has-comp-bg.is-selected,
 .log-row.is-marked:hover,
 .log-row.is-marked.is-selected {
   box-shadow:
     inset 5px 0 0 #ffc107,
+    inset 0 0 0 1px rgba(255, 193, 7, 0.45),
+    0 0 18px rgba(255, 193, 7, 0.2);
+}
+.log-row.has-command.has-comp-bg:hover,
+.log-row.has-command.has-comp-bg.is-selected,
+.log-row.has-command:hover,
+.log-row.has-command.is-selected {
+  box-shadow:
+    inset -5px 0 0 #56d4dd,
+    inset 0 0 0 1px rgba(86, 212, 221, 0.4),
+    0 0 16px rgba(86, 212, 221, 0.18);
+}
+.log-row.is-marked.has-command:hover,
+.log-row.is-marked.has-command.is-selected {
+  box-shadow:
+    inset 5px 0 0 #ffc107,
+    inset -5px 0 0 #56d4dd,
     inset 0 0 0 1px rgba(255, 193, 7, 0.45),
     0 0 18px rgba(255, 193, 7, 0.2);
 }
@@ -703,10 +759,25 @@ body {
   margin-right: 2px;
   text-shadow: 0 0 8px rgba(255, 193, 7, 0.9);
 }
+.line-command-icon,
+.gutter-command-icon {
+  color:       #56d4dd;
+  font-size:   11px;
+  margin-right: 2px;
+  text-shadow: 0 0 8px rgba(86, 212, 221, 0.85);
+}
 .line-number.is-marked-num {
   color:       #ffc107;
   font-weight: bold;
   text-shadow: 0 0 6px rgba(255, 193, 7, 0.55);
+}
+.line-number.is-command-num {
+  color:       #7fdbca;
+  font-weight: bold;
+  text-shadow: 0 0 6px rgba(86, 212, 221, 0.45);
+}
+.line-number.is-marked-num.is-command-num {
+  color:       #ffe082;
 }
 .log-row.has-comp-bg:hover,
 .log-row.has-comp-bg.is-selected {
@@ -789,6 +860,25 @@ mark.pattern-highlight {
   box-shadow:   0 0 5px rgba(230, 180, 80, .25);
 }
 
+/* KPI markers identify automotive media milestones in dense message output. */
+.kpi-toggle code {
+  color: #e9b6ff;
+  font: .66rem Consolas, monospace;
+}
+mark.kpi-highlight {
+  background: linear-gradient(90deg, rgba(190, 112, 255, .38), rgba(255, 91, 192, .30));
+  color: #fff0ff;
+  font-weight: 800;
+  letter-spacing: .02em;
+  border-radius: 3px;
+  padding: 1px 4px;
+  border: 1px solid rgba(224, 142, 255, .8);
+  box-shadow: 0 0 8px rgba(206, 112, 255, .55), inset 0 0 5px rgba(255, 255, 255, .16);
+}
+.log-row:has(mark.kpi-highlight) {
+  background: color-mix(in srgb, var(--row-bg, transparent) 78%, rgba(171, 84, 226, .18));
+}
+
 .raw-editor-gutter .gutter-line {
   display: block;
   line-height: 1.5;
@@ -802,7 +892,21 @@ mark.pattern-highlight {
   box-shadow:   inset 3px 0 0 #ffc107;
   text-shadow:  0 0 8px rgba(255, 193, 7, 0.75);
 }
+.raw-editor-gutter .gutter-line.is-command {
+  color:        #7fdbca;
+  font-weight:  bold;
+  background:   rgba(86, 212, 221, 0.1);
+  box-shadow:   inset -3px 0 0 #56d4dd;
+  text-shadow:  0 0 8px rgba(86, 212, 221, 0.65);
+}
+.raw-editor-gutter .gutter-line.is-marked.is-command {
+  box-shadow:   inset 3px 0 0 #ffc107, inset -3px 0 0 #56d4dd;
+}
 .raw-editor-gutter .gutter-mark-icon {
+  display: inline-block;
+  transform: scale(0.95);
+}
+.raw-editor-gutter .gutter-command-icon {
   display: inline-block;
   transform: scale(0.95);
 }
@@ -836,6 +940,130 @@ mark.pattern-highlight {
   color:      var(--accent);
 }
 .line-context-menu button[data-action="unmark"] { color: #e6b450; }
+.line-context-menu button[data-action="add-command"],
+.line-context-menu button[data-action="edit-command"] { color: #7fdbca; }
+.line-context-menu button[data-action="remove-command"] { color: #e06c75; }
+
+/* Line command dialog */
+.line-command-dialog {
+  position:   fixed;
+  inset:      0;
+  z-index:    2147483647;
+  display:    flex;
+  align-items: center;
+  justify-content: center;
+  padding:    24px;
+}
+.line-command-dialog[hidden] { display: none; }
+.line-command-dialog-backdrop {
+  position:   absolute;
+  inset:      0;
+  background: rgba(0, 0, 0, 0.55);
+}
+.line-command-dialog-panel {
+  position:      relative;
+  width:         min(520px, 100%);
+  background:    #1a2029;
+  border:        1px solid var(--line);
+  border-radius: 10px;
+  box-shadow:    0 16px 40px rgba(0, 0, 0, 0.6);
+  padding:       16px;
+  display:       flex;
+  flex-direction: column;
+  gap:           10px;
+}
+.line-command-dialog-title {
+  font:          13px/1.4 Consolas, monospace;
+  color:         var(--accent);
+  font-weight:   700;
+}
+.line-command-dialog-hint {
+  margin:        0;
+  color:         var(--muted);
+  font-size:     12px;
+}
+#line-command-input {
+  min-height:    96px;
+  resize:        vertical;
+  border:        1px solid var(--line);
+  border-radius: 8px;
+  background:    #12161d;
+  color:         var(--text);
+  padding:       10px 12px;
+  font:          12px/1.5 Consolas, monospace;
+  outline:       0;
+}
+#line-command-input:focus {
+  border-color:  #56d4dd;
+  box-shadow:    0 0 0 2px rgba(86, 212, 221, 0.2);
+}
+.line-command-dialog-actions {
+  display:       flex;
+  justify-content: flex-end;
+  gap:           8px;
+}
+
+.line-command-viewer {
+  position:      fixed;
+  z-index:       2147483647;
+  width:         min(420px, calc(100vw - 24px));
+  max-height:    min(280px, calc(100vh - 24px));
+  background:    #1a2029;
+  border:        1px solid rgba(86, 212, 221, 0.45);
+  border-radius: 10px;
+  box-shadow:    0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(86, 212, 221, 0.15);
+  display:       flex;
+  flex-direction: column;
+  overflow:      hidden;
+}
+.line-command-viewer[hidden] { display: none; }
+.line-command-viewer-header {
+  display:         flex;
+  align-items:     center;
+  justify-content: space-between;
+  gap:             8px;
+  padding:         10px 12px;
+  border-bottom:   1px solid var(--line);
+  background:      rgba(86, 212, 221, 0.08);
+}
+.line-command-viewer-title {
+  color:       #7fdbca;
+  font:        12px/1.4 Consolas, monospace;
+  font-weight: 700;
+}
+.line-command-viewer-close {
+  background:    transparent;
+  border:        0;
+  color:         var(--muted);
+  cursor:        pointer;
+  font-size:     18px;
+  line-height:   1;
+  padding:       0 4px;
+}
+.line-command-viewer-close:hover { color: var(--red); }
+.line-command-viewer-body {
+  margin:        0;
+  padding:       12px;
+  overflow:      auto;
+  white-space:   pre-wrap;
+  word-break:    break-word;
+  font:          12px/1.5 Consolas, monospace;
+  color:         var(--text);
+  flex:          1;
+  min-height:    48px;
+  max-height:    180px;
+}
+.line-command-viewer-actions {
+  display:         flex;
+  justify-content: flex-end;
+  gap:             8px;
+  padding:         8px 12px 12px;
+  border-top:      1px solid var(--line);
+}
+
+.raw-editor-gutter .gutter-line.is-command {
+  cursor: pointer;
+}
 
 /* ==========================================================================
    Clickable Column Header Filters

@@ -38,7 +38,9 @@ const library          = new LogLibrary();
 const allGrid      = new VirtualGrid($('all-log-grid'),      onRowSelect);
 const filteredGrid = new VirtualGrid($('filtered-log-grid'), onRowSelect);
 
-let contextMenuRecord = null;
+let contextMenuRecord  = null;
+let commandDialogLine  = null;
+let commandViewerLine  = null;
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -54,7 +56,9 @@ const state = {
   columnFilters:      {},      // { lvl, component, pidTid, message, time }
   searchTags:         [],      // { id, label, global, regex, enabled }[]
   highlights:         [],      // { id, label, global, regex, enabled }[]
+  kpiHighlight:       false,
   markedLines:        new Set(), // editor line numbers flagged for quick finding
+  lineCommands:       new Map(), // lineNum → command/note text
 };
 
 // ---------------------------------------------------------------------------
@@ -173,18 +177,48 @@ function buildHighlightRegexes() {
     if (regex) filterRxs.push(regex);
   }
 
-  return { filterRxs, patternRxs };
+  const kpiRxs = state.kpiHighlight ? [/\[KPI_[^\]\r\n]+\]/gi] : [];
+  return { filterRxs, patternRxs, kpiRxs };
 }
 
 function pushHighlightsToGrids() {
-  const { filterRxs, patternRxs } = buildHighlightRegexes();
-  allGrid.setHighlights(filterRxs, patternRxs);
-  filteredGrid.setHighlights(filterRxs, patternRxs);
+  const { filterRxs, patternRxs, kpiRxs } = buildHighlightRegexes();
+  allGrid.setHighlights(filterRxs, patternRxs, kpiRxs);
+  filteredGrid.setHighlights(filterRxs, patternRxs, kpiRxs);
 }
 
 function pushMarkedLinesToGrids() {
   allGrid.setMarkedLines(state.markedLines);
   filteredGrid.setMarkedLines(state.markedLines);
+}
+
+function pushLineCommandsToGrids() {
+  allGrid.setLineCommands(state.lineCommands);
+  filteredGrid.setLineCommands(state.lineCommands);
+}
+
+function hasLineCommand(line) {
+  return state.lineCommands.has(line);
+}
+
+function getLineCommand(line) {
+  return state.lineCommands.get(line) ?? '';
+}
+
+function setLineCommand(line, text) {
+  state.lineCommands.set(line, text);
+  pushLineCommandsToGrids();
+  updateRawEditorGutter();
+  updateRawEditorMarkers();
+  scheduleSessionSave();
+}
+
+function removeLineCommand(line) {
+  state.lineCommands.delete(line);
+  pushLineCommandsToGrids();
+  updateRawEditorGutter();
+  updateRawEditorMarkers();
+  scheduleSessionSave();
 }
 
 function isLineMarked(line) {
@@ -254,6 +288,12 @@ function showLineContextMenu(e, record) {
   menu.querySelector('[data-action="mark"]').hidden = marked;
   menu.querySelector('[data-action="unmark"]').hidden = !marked;
 
+  const hasCmd = hasLineCommand(record.line);
+  menu.querySelector('[data-action="add-command"]').hidden = hasCmd;
+  menu.querySelector('[data-action="edit-command"]').hidden = !hasCmd;
+  menu.querySelector('[data-action="copy-command"]').hidden = !hasCmd;
+  menu.querySelector('[data-action="remove-command"]').hidden = !hasCmd;
+
   const gotoBtn = menu.querySelector('[data-action="goto"]');
   if (gotoBtn) gotoBtn.hidden = !($('log-text')?.value);
 
@@ -316,6 +356,87 @@ function showGutterContextMenu(e) {
   showLineContextMenu(e, { line, raw: getEditorLineRaw(line) });
 }
 
+function showCommandDialog(line, existingText = '') {
+  const dialog = $('line-command-dialog');
+  const input = $('line-command-input');
+  const numEl = $('line-command-line-num');
+  if (!dialog || !input) return;
+
+  commandDialogLine = line;
+  if (numEl) numEl.textContent = String(line);
+  input.value = existingText;
+  attachOverlayToHost(dialog);
+  dialog.hidden = false;
+  input.focus();
+  input.select?.();
+}
+
+function hideCommandDialog() {
+  const dialog = $('line-command-dialog');
+  if (dialog) dialog.hidden = true;
+  commandDialogLine = null;
+}
+
+function saveCommandDialog() {
+  const line = commandDialogLine;
+  if (!line) return;
+
+  const text = $('line-command-input')?.value.trim() ?? '';
+  if (!text) {
+    removeLineCommand(line);
+    setStatus(`Removed command from line ${line}`);
+  } else {
+    setLineCommand(line, text);
+    setStatus(`Saved command on line ${line}`);
+  }
+  hideCommandDialog();
+}
+
+function showCommandViewer(line, x, y) {
+  const viewer = $('line-command-viewer');
+  const textEl = $('line-command-view-text');
+  const lineEl = $('line-command-view-line');
+  if (!viewer || !textEl) return;
+
+  const text = getLineCommand(line);
+  if (!text) return;
+
+  hideLineContextMenu();
+  commandViewerLine = line;
+  if (lineEl) lineEl.textContent = String(line);
+  textEl.textContent = text;
+
+  attachOverlayToHost(viewer);
+  viewer.hidden = false;
+
+  const pad = 8;
+  viewer.style.left = `${x}px`;
+  viewer.style.top  = `${y + 12}px`;
+
+  const rect = viewer.getBoundingClientRect();
+  let left = x;
+  let top  = y + 12;
+  if (rect.right > window.innerWidth - pad) {
+    left = Math.max(pad, window.innerWidth - rect.width - pad);
+  }
+  if (rect.bottom > window.innerHeight - pad) {
+    top = Math.max(pad, y - rect.height - 12);
+  }
+  viewer.style.left = `${left}px`;
+  viewer.style.top  = `${top}px`;
+}
+
+function hideCommandViewer() {
+  const viewer = $('line-command-viewer');
+  if (viewer) viewer.hidden = true;
+  commandViewerLine = null;
+}
+
+function handleCommandDblClick(e, record) {
+  if (!record || !hasLineCommand(record.line)) return;
+  showCommandViewer(record.line, e.clientX, e.clientY);
+}
+
 // ---------------------------------------------------------------------------
 // Core view update
 // ---------------------------------------------------------------------------
@@ -331,6 +452,7 @@ function applyView() {
 
   pushHighlightsToGrids();
   pushMarkedLinesToGrids();
+  pushLineCommandsToGrids();
   updateMetrics();
 
   if (store.lines.length) {
@@ -436,9 +558,13 @@ function updateRawEditorGutter() {
   gutter.innerHTML = Array.from({ length: count }, (_, i) => {
     const lineNum = i + 1;
     const marked = isLineMarked(lineNum);
-    const cls = marked ? 'gutter-line is-marked' : 'gutter-line';
-    const icon = marked ? '<span class="gutter-mark-icon" aria-hidden="true">★</span>' : '';
-    return `<span class="${cls}" data-line="${lineNum}">${icon}${lineNum}</span>`;
+    const hasCmd = hasLineCommand(lineNum);
+    let cls = 'gutter-line';
+    if (marked) cls += ' is-marked';
+    if (hasCmd) cls += ' is-command';
+    const markIcon = marked ? '<span class="gutter-mark-icon" aria-hidden="true">★</span>' : '';
+    const cmdIcon = hasCmd ? '<span class="gutter-command-icon" aria-hidden="true">⚡</span>' : '';
+    return `<span class="${cls}" data-line="${lineNum}">${markIcon}${cmdIcon}${lineNum}</span>`;
   }).join('');
   updateRawEditorMarkers();
 }
@@ -455,8 +581,10 @@ function updateRawEditorMarkers() {
   inner.style.height = `${count * lineH}px`;
   inner.innerHTML = lines.map((_, i) => {
     const lineNum = i + 1;
-    if (!isLineMarked(lineNum)) return '';
-    return `<div class="mark-band" style="top:${i * lineH}px"></div>`;
+    const parts = [];
+    if (isLineMarked(lineNum)) parts.push(`<div class="mark-band" style="top:${i * lineH}px"></div>`);
+    if (hasLineCommand(lineNum)) parts.push(`<div class="command-band" style="top:${i * lineH}px"></div>`);
+    return parts.join('');
   }).join('');
   inner.style.transform = `translateY(-${editor.scrollTop}px)`;
 }
@@ -839,7 +967,9 @@ function clearAll() {
   state.columnFilters  = {};
   state.searchTags     = [];
   state.highlights     = [];
+  state.kpiHighlight   = false;
   state.markedLines    = new Set();
+  state.lineCommands   = new Map();
   updateColFilterIndicators();
 
   switchTopView('raw');
@@ -847,10 +977,12 @@ function clearAll() {
   renderRuleList('search-tag-list', state.searchTags,  scheduleFilter);
   renderRuleList('highlight-list',  state.highlights,  pushHighlightsToGrids);
 
-  allGrid.setHighlights([], []);
+  allGrid.setHighlights([], [], []);
   allGrid.setRecords([]);
-  filteredGrid.setHighlights([], []);
+  filteredGrid.setHighlights([], [], []);
   filteredGrid.setRecords([]);
+  pushMarkedLinesToGrids();
+  pushLineCommandsToGrids();
 
   updateMetrics();
   updateRepositoryStatus();
@@ -933,10 +1065,12 @@ function buildSessionSnapshot() {
     columnFilters: serializeColumnFilters(state.columnFilters),
     searchTags: serializeRules(state.searchTags),
     highlights: serializeRules(state.highlights),
+    kpiHighlight: state.kpiHighlight,
     searchInput: $('search')?.value ?? '',
     quickFilterInput: $('quick-filter-input')?.value ?? '',
     autoSave: $('auto-save')?.checked !== false,
     markedLines: [...state.markedLines],
+    lineCommands: Object.fromEntries(state.lineCommands),
   };
 }
 
@@ -956,6 +1090,7 @@ function applyFilterUiFromState() {
   if ($('case-sensitive')) $('case-sensitive').checked = state.caseSensitive;
   if ($('filter-by-repository')) $('filter-by-repository').checked = state.filterByRepository;
   if ($('level-filter')) $('level-filter').value = state.level;
+  if ($('kpi-highlight')) $('kpi-highlight').checked = state.kpiHighlight;
 }
 
 async function restoreSession() {
@@ -974,7 +1109,13 @@ async function restoreSession() {
     state.columnFilters = deserializeColumnFilters(saved.columnFilters);
     state.searchTags = deserializeRules(saved.searchTags);
     state.highlights = deserializeRules(saved.highlights, true);
+    state.kpiHighlight = !!saved.kpiHighlight;
     state.markedLines = new Set((saved.markedLines ?? []).map(Number).filter(n => n > 0));
+    state.lineCommands = new Map(
+      Object.entries(saved.lineCommands ?? {})
+        .map(([line, text]) => [Number(line), String(text ?? '').trim()])
+        .filter(([line, text]) => line > 0 && text)
+    );
 
     applyFilterUiFromState();
     if ($('search')) $('search').value = saved.searchInput ?? '';
@@ -987,6 +1128,7 @@ async function restoreSession() {
     renderRuleList('highlight-list', state.highlights, pushHighlightsToGrids);
     updateColFilterIndicators();
     pushMarkedLinesToGrids();
+    pushLineCommandsToGrids();
     updateRawEditorGutter();
 
     editorLibraryId = saved.editorLibraryId ?? null;
@@ -1095,10 +1237,16 @@ document.querySelectorAll('.pane-fullscreen').forEach(btn => {
 document.addEventListener('fullscreenchange', () => {
   const popover = $('header-filter-popover');
   const menu = $('line-context-menu');
+  const cmdDialog = $('line-command-dialog');
+  const cmdViewer = $('line-command-viewer');
 
   if (!document.fullscreenElement) {
     if (popover && popover.parentElement !== document.body) document.body.appendChild(popover);
+    if (cmdDialog && cmdDialog.parentElement !== document.body) document.body.appendChild(cmdDialog);
+    if (cmdViewer && cmdViewer.parentElement !== document.body) document.body.appendChild(cmdViewer);
     hideLineContextMenu();
+    hideCommandDialog();
+    hideCommandViewer();
   }
 
   if (popover && _activeColFilter && !popover.hidden) {
@@ -1120,15 +1268,25 @@ $('log-text')?.addEventListener('input', () => {
 });
 $('log-text')?.addEventListener('scroll', syncRawEditorGutterScroll);
 $('log-text')?.addEventListener('contextmenu', showEditorContextMenu);
+$('log-text')?.addEventListener('dblclick', e => {
+  const line = getEditorLineAtCursor();
+  if (hasLineCommand(line)) showCommandViewer(line, e.clientX, e.clientY);
+});
 $('raw-editor-wrap')?.addEventListener('contextmenu', e => {
   if (e.target.closest('#raw-editor-gutter') || e.target.closest('.gutter-line')) {
     showGutterContextMenu(e);
   }
 });
+$('raw-editor-gutter')?.addEventListener('dblclick', e => {
+  const line = getGutterLineAtEvent(e);
+  if (hasLineCommand(line)) showCommandViewer(line, e.clientX, e.clientY);
+});
 updateRawEditorGutter();
 
 allGrid.onContextMenu = showLineContextMenu;
 filteredGrid.onContextMenu = showLineContextMenu;
+allGrid.onCommandDblClick = handleCommandDblClick;
+filteredGrid.onCommandDblClick = handleCommandDblClick;
 
 // --- Line context menu ---
 $('line-context-menu')?.addEventListener('click', e => {
@@ -1150,16 +1308,62 @@ $('line-context-menu')?.addEventListener('click', e => {
     case 'goto':
       onRowSelect(contextMenuRecord);
       break;
+    case 'add-command':
+      showCommandDialog(line);
+      break;
+    case 'edit-command':
+      showCommandDialog(line, getLineCommand(line));
+      break;
+    case 'copy-command':
+      copyToClipboard(getLineCommand(line));
+      break;
+    case 'remove-command':
+      removeLineCommand(line);
+      setStatus(`Removed command from line ${line}`);
+      break;
     default:
       break;
   }
   hideLineContextMenu();
 });
+
+$('line-command-save')?.addEventListener('click', saveCommandDialog);
+$('line-command-cancel')?.addEventListener('click', hideCommandDialog);
+$('line-command-dialog')?.addEventListener('click', e => {
+  if (e.target.closest('[data-action="cancel-command"]')) hideCommandDialog();
+});
+$('line-command-input')?.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    hideCommandDialog();
+  } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    saveCommandDialog();
+  }
+});
+
+$('line-command-view-close')?.addEventListener('click', hideCommandViewer);
+$('line-command-view-copy')?.addEventListener('click', () => {
+  if (!commandViewerLine) return;
+  copyToClipboard(getLineCommand(commandViewerLine));
+});
+$('line-command-view-edit')?.addEventListener('click', () => {
+  const line = commandViewerLine;
+  if (!line) return;
+  hideCommandViewer();
+  showCommandDialog(line, getLineCommand(line));
+});
+
 document.addEventListener('click', e => {
   if (!e.target.closest('#line-context-menu')) hideLineContextMenu();
+  if (!e.target.closest('#line-command-viewer')) hideCommandViewer();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') hideLineContextMenu();
+  if (e.key === 'Escape') {
+    hideLineContextMenu();
+    hideCommandDialog();
+    hideCommandViewer();
+  }
 });
 
 // --- Repository map text ---
@@ -1190,6 +1394,11 @@ $('highlight-pattern')?.addEventListener('keydown', e => {
     e.preventDefault();
     addRule('highlight-pattern', state.highlights, 'highlight-list', pushHighlightsToGrids, true);
   }
+});
+$('kpi-highlight')?.addEventListener('change', e => {
+  state.kpiHighlight = e.target.checked;
+  pushHighlightsToGrids();
+  scheduleSessionSave();
 });
 
 // --- Filter toggles ---

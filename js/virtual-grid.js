@@ -52,9 +52,12 @@ export class VirtualGrid {
     this.records          = [];
     this.filterHighlights = [];   // cyan — from search/filter tags
     this.patternHighlights = [];  // gold — from the Highlight section
+    this.kpiHighlights    = [];
     this.markedLines      = new Set();
+    this.lineCommands     = new Map();
     this.selectedLine     = null;
-    this.onContextMenu    = null;
+    this.onContextMenu     = null;
+    this.onCommandDblClick = null;
     this._frame           = 0;    // rAF handle
     this._pendingRender   = false;
     this._pidColors       = new Map(); // pid string → hsl color
@@ -90,6 +93,14 @@ export class VirtualGrid {
       e.preventDefault();
       const record = this.records[Number(row.dataset.index)];
       if (record) this.onContextMenu?.(e, record);
+    });
+    this.rows?.addEventListener('dblclick', e => {
+      const row = e.target.closest('[data-index]');
+      if (!row) return;
+      const record = this.records[Number(row.dataset.index)];
+      if (record && this.lineCommands.has(record.line)) {
+        this.onCommandDblClick?.(e, record);
+      }
     });
 
     document.addEventListener('selectionchange', () => {
@@ -131,15 +142,26 @@ export class VirtualGrid {
    * @param {RegExp[]} filterHighlights  — Search/filter matches (cyan)
    * @param {RegExp[]} patternHighlights — Pattern/highlight matches (gold)
    */
-  setHighlights(filterHighlights = [], patternHighlights = []) {
+  setHighlights(filterHighlights = [], patternHighlights = [], kpiHighlights = []) {
     this.filterHighlights  = filterHighlights;
     this.patternHighlights = patternHighlights;
+    this.kpiHighlights     = kpiHighlights;
     this.schedule();
   }
 
   /** Update which line numbers show as marked. */
   setMarkedLines(markedLines) {
     this.markedLines = markedLines instanceof Set ? markedLines : new Set(markedLines ?? []);
+    this.schedule();
+  }
+
+  /** Update line-number → command text map. */
+  setLineCommands(lineCommands) {
+    if (lineCommands instanceof Map) {
+      this.lineCommands = lineCommands;
+    } else {
+      this.lineCommands = new Map(Object.entries(lineCommands ?? {}));
+    }
     this.schedule();
   }
 
@@ -222,16 +244,27 @@ export class VirtualGrid {
     const [pid  = '', tid  = ''] = (r.pidTid    ?? '').split('/');
     const selected = r.line === this.selectedLine ? ' is-selected' : '';
     const marked   = this.markedLines.has(r.line);
+    const hasCmd   = this.lineCommands.has(r.line);
     const pidStyle = pid ? ` style="color:${this._pidColor(pid)}"` : '';
     const compColor = getComponentColor(r.component);
     const rowBg = compColor ? subtleBackground(compColor, 0.2) : '';
     const rowStyle = rowBg ? ` style="--row-bg:${rowBg}"` : '';
-    const lineCell = marked
-      ? `<span class="line-number is-marked-num"><span class="line-mark-icon" aria-hidden="true">★</span>${r.line}</span>`
-      : `<span class="line-number">${r.line}</span>`;
+
+    let lineClasses = 'line-number';
+    if (marked) lineClasses += ' is-marked-num';
+    if (hasCmd) lineClasses += ' is-command-num';
+    const icons = [];
+    if (hasCmd) icons.push('<span class="line-command-icon" aria-hidden="true">⚡</span>');
+    if (marked) icons.push('<span class="line-mark-icon" aria-hidden="true">★</span>');
+    const lineCell = `<span class="${lineClasses}">${icons.join('')}${r.line}</span>`;
+
+    const cmdText = this.lineCommands.get(r.line);
+    const titleText = cmdText
+      ? `${r.raw}\n\nCommand: ${cmdText}\n(Double-click to view command)`
+      : r.raw;
 
     return (
-      `<div data-index="${index}" class="log-row grid-row${selected}${marked ? ' is-marked' : ''}${rowBg ? ' has-comp-bg' : ''}"${rowStyle} title="${escapeHtml(r.raw)}">` +
+      `<div data-index="${index}" class="log-row grid-row${selected}${marked ? ' is-marked' : ''}${hasCmd ? ' has-command' : ''}${rowBg ? ' has-comp-bg' : ''}"${rowStyle} title="${escapeHtml(titleText)}">` +
         lineCell +
         `<span class="timestamp"><em>${this._hl(date)}</em> <strong>${this._hl(time)}</strong></span>` +
         `<span class="level-${r.level ?? '?'}">${r.level ?? '?'}</span>` +
@@ -254,6 +287,7 @@ export class VirtualGrid {
     const matches = [
       ...this._findMatches(text, this.filterHighlights,  'filter'),
       ...this._findMatches(text, this.patternHighlights, 'pattern'),
+      ...this._findMatches(text, this.kpiHighlights,     'kpi'),
     ];
 
     if (!matches.length) return escapeHtml(text);
@@ -266,7 +300,7 @@ export class VirtualGrid {
     let cursor = 0;
     for (const { from, to, type } of matches) {
       if (from < cursor) continue;
-      const cls = type === 'filter' ? 'filter-highlight' : 'pattern-highlight';
+      const cls = type === 'filter' ? 'filter-highlight' : type === 'kpi' ? 'kpi-highlight' : 'pattern-highlight';
       out += escapeHtml(text.slice(cursor, from)) +
              `<mark class="${cls}">${escapeHtml(text.slice(from, to))}</mark>`;
       cursor = to;
