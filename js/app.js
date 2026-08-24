@@ -143,10 +143,10 @@ function renderPageTabs() {
   updateEditorModeLabel();
 }
 
-function switchPage(pageId) {
+function switchPage(pageId, { skipSave = false } = {}) {
   if (pageId === activePageId && pages.length > 0) return;
 
-  saveActivePageState();
+  if (!skipSave) saveActivePageState();
 
   const targetPage = pages.find(p => p.id === pageId);
   if (!targetPage) return;
@@ -196,6 +196,8 @@ function closePage(pageId) {
   if (idx === -1) return;
 
   if (pages.length === 1) {
+    clearTimeout(editorSaveTimer);
+
     const page = pages[0];
     page.name = 'Log Page 1';
     page.content = '';
@@ -218,12 +220,19 @@ function closePage(pageId) {
     return;
   }
 
+  const isClosingActive = activePageId === pageId;
+
+  if (isClosingActive) {
+    clearTimeout(editorSaveTimer);
+  } else {
+    saveActivePageState();
+  }
+
   pages.splice(idx, 1);
 
-  if (activePageId === pageId) {
+  if (isClosingActive) {
     const nextActive = pages[idx] || pages[idx - 1] || pages[0];
-    activePageId = null;
-    switchPage(nextActive.id);
+    switchPage(nextActive.id, { skipSave: true });
   } else {
     renderPageTabs();
     scheduleSessionSave();
@@ -1062,7 +1071,7 @@ async function renderLibrary() {
     const rawLogs = await library.list();
 
     for (const log of rawLogs) {
-      if (log.name.toLowerCase().includes('pasted log')) {
+      if (log.name?.toLowerCase().includes('pasted log')) {
         await library.remove(log.id);
       }
     }
@@ -1149,6 +1158,9 @@ async function renderLibrary() {
         if (!confirm(`Delete "${log.name}"?`)) return;
         await library.remove(log.id);
         if (editorLibraryId === log.id) editorLibraryId = null;
+        for (const page of pages) {
+          if (page.editorLibraryId === log.id) page.editorLibraryId = null;
+        }
         renderLibrary();
       });
 
