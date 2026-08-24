@@ -43,6 +43,207 @@ let commandDialogLine  = null;
 let commandViewerLine  = null;
 
 // ---------------------------------------------------------------------------
+// Multi-page Log Editor State
+// ---------------------------------------------------------------------------
+
+class LogPage {
+  constructor(id, name = 'Log Page 1', content = '') {
+    this.id = id;
+    this.name = name;
+    this.content = content;
+    this.formatMode = 'AUTO';
+    this.markedLines = new Set();
+    this.lineCommands = new Map();
+    this.editorLibraryId = null;
+    this.scrollTop = 0;
+  }
+}
+
+let pages = [new LogPage('page_1', 'Log Page 1', '')];
+let activePageId = 'page_1';
+
+function getActivePage() {
+  return pages.find(p => p.id === activePageId) || pages[0];
+}
+
+function saveActivePageState() {
+  const page = getActivePage();
+  if (!page) return;
+  const editor = $('log-text');
+  page.content = editor?.value ?? '';
+  page.formatMode = state.formatMode || 'AUTO';
+  page.markedLines = new Set(state.markedLines);
+  page.lineCommands = new Map(state.lineCommands);
+  page.editorLibraryId = editorLibraryId;
+  page.scrollTop = editor?.scrollTop ?? 0;
+}
+
+function updateEditorModeLabel() {
+  const page = getActivePage();
+  const modeEl = $('editor-mode');
+  if (modeEl && page) {
+    const lineCount = store.lines.length;
+    modeEl.textContent = `File: ${page.name} · ${lineCount.toLocaleString()} lines parsed`;
+  }
+}
+
+function renderPageTabs() {
+  const container = $('page-tabs-list');
+  if (!container) return;
+
+  container.replaceChildren(
+    ...pages.map(page => {
+      const tab = document.createElement('div');
+      tab.className = `page-tab${page.id === activePageId ? ' is-active' : ''}`;
+      tab.dataset.pageId = page.id;
+
+      const icon = document.createElement('span');
+      icon.className = 'page-tab-icon';
+      icon.textContent = '📄';
+
+      const title = document.createElement('span');
+      title.className = 'page-tab-title';
+      title.textContent = page.name;
+      title.title = `${page.name} (Click to select, double-click to rename)`;
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.className = 'page-tab-rename';
+      renameBtn.textContent = '✏';
+      renameBtn.title = 'Rename file';
+      renameBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        renamePage(page.id);
+      });
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'page-tab-close';
+      closeBtn.innerHTML = '&times;';
+      closeBtn.title = 'Close tab';
+      closeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        closePage(page.id);
+      });
+
+      tab.append(icon, title, renameBtn, closeBtn);
+
+      tab.addEventListener('click', () => {
+        switchPage(page.id);
+      });
+
+      tab.addEventListener('dblclick', e => {
+        if (e.target === closeBtn || e.target === renameBtn) return;
+        renamePage(page.id);
+      });
+
+      return tab;
+    })
+  );
+
+  updateEditorModeLabel();
+}
+
+function switchPage(pageId) {
+  if (pageId === activePageId && pages.length > 0) return;
+
+  saveActivePageState();
+
+  const targetPage = pages.find(p => p.id === pageId);
+  if (!targetPage) return;
+
+  activePageId = pageId;
+
+  const editor = $('log-text');
+  if (editor) editor.value = targetPage.content;
+
+  state.formatMode = targetPage.formatMode || 'AUTO';
+  state.markedLines = new Set(targetPage.markedLines || []);
+  state.lineCommands = new Map(targetPage.lineCommands || []);
+  editorLibraryId = targetPage.editorLibraryId || null;
+
+  setFormatMode(state.formatMode, { silent: true });
+
+  updateRawEditorGutter();
+  parseEditorText();
+
+  if (editor) editor.scrollTop = targetPage.scrollTop || 0;
+  syncRawEditorGutterScroll();
+
+  renderPageTabs();
+  scheduleSessionSave();
+}
+
+function addNewPage(name = '', content = '', select = true) {
+  const id = `page_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+  const pageNum = pages.length + 1;
+  const pageName = name.trim() || `Log Page ${pageNum}`;
+  const newPage = new LogPage(id, pageName, content);
+
+  if (activePageId) saveActivePageState();
+
+  pages.push(newPage);
+
+  if (select) {
+    switchPage(id);
+  } else {
+    renderPageTabs();
+  }
+  return newPage;
+}
+
+function closePage(pageId) {
+  const idx = pages.findIndex(p => p.id === pageId);
+  if (idx === -1) return;
+
+  if (pages.length === 1) {
+    const page = pages[0];
+    page.name = 'Log Page 1';
+    page.content = '';
+    page.formatMode = 'AUTO';
+    page.markedLines.clear();
+    page.lineCommands.clear();
+    page.editorLibraryId = null;
+
+    if ($('log-text')) $('log-text').value = '';
+    state.formatMode = 'AUTO';
+    state.markedLines.clear();
+    state.lineCommands.clear();
+    editorLibraryId = null;
+
+    setFormatMode('AUTO', { silent: true });
+    updateRawEditorGutter();
+    parseEditorText();
+    renderPageTabs();
+    scheduleSessionSave();
+    return;
+  }
+
+  pages.splice(idx, 1);
+
+  if (activePageId === pageId) {
+    const nextActive = pages[idx] || pages[idx - 1] || pages[0];
+    activePageId = null;
+    switchPage(nextActive.id);
+  } else {
+    renderPageTabs();
+    scheduleSessionSave();
+  }
+}
+
+function renamePage(pageId) {
+  const page = pages.find(p => p.id === pageId);
+  if (!page) return;
+
+  const newName = prompt('Rename page/file:', page.name);
+  if (!newName || !newName.trim() || newName.trim() === page.name) return;
+
+  page.name = newName.trim();
+  renderPageTabs();
+  scheduleSessionSave();
+}
+
+// ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
 
@@ -480,11 +681,19 @@ function parseEditorText() {
   abortController?.abort();
   store.clear();
 
+  const activePage = getActivePage();
+  if (activePage) {
+    activePage.content = text;
+    activePage.formatMode = formatMode;
+  }
+
   if (!text.trim()) {
     editorLibraryId = null;
+    if (activePage) activePage.editorLibraryId = null;
     allGrid.setRecords([]);
     filteredGrid.setRecords([]);
     updateMetrics();
+    updateEditorModeLabel();
     setStatus('Raw Log Editor is empty');
     return;
   }
@@ -495,9 +704,7 @@ function parseEditorText() {
     .map((raw, i) => parseLine(raw, i + 1, formatMode));
 
   store.append(parsed);
-
-  const editorMode = $('editor-mode');
-  if (editorMode) editorMode.textContent = `Live editor — ${store.totalRead.toLocaleString()} lines parsed`;
+  updateEditorModeLabel();
 
   applyView();
   scheduleEditorSave();
@@ -516,6 +723,7 @@ async function saveEditorToLibrary() {
   const text = $('log-text')?.value ?? '';
   if (!text.trim()) return;
 
+  const activePage = getActivePage();
   const blob = new Blob([text], { type: 'text/plain' });
 
   try {
@@ -526,13 +734,10 @@ async function saveEditorToLibrary() {
         savedAt: Date.now(),
       });
     } else {
-      const name = `Pasted log · ${new Date().toLocaleString()}`;
+      const name = activePage ? activePage.name : `Pasted log · ${new Date().toLocaleString()}`;
       const item = await library.save(name, blob);
       editorLibraryId = item.id;
-      const modeEl = $('editor-mode');
-      if (modeEl && !modeEl.textContent.startsWith('Loading')) {
-        modeEl.textContent = `Saved log: ${name}`;
-      }
+      if (activePage) activePage.editorLibraryId = item.id;
     }
     await renderLibrary();
     scheduleSessionSave();
@@ -650,14 +855,23 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
   abortController?.abort();
   abortController = new AbortController();
 
+  let activePage = getActivePage();
+  const currentText = $('log-text')?.value ?? '';
+
+  if (currentText.trim() && activePage) {
+    activePage = addNewPage(displayName, '', true);
+  } else if (activePage) {
+    activePage.name = displayName;
+    renderPageTabs();
+  }
+
   store.clear();
   allGrid.setRecords([]);
   filteredGrid.setRecords([]);
   updateMetrics();
   clearTimeout(editorSaveTimer);
   editorLibraryId = null;
-  clearTimeout(editorSaveTimer);
-  editorLibraryId = null;
+  if (activePage) activePage.editorLibraryId = null;
 
   const editorMode = $('editor-mode');
   if (editorMode) editorMode.textContent = `Loading ${displayName}…`;
@@ -666,6 +880,7 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
   let nextLineNumber = 1;
   const formatMode = $('log-format')?.value ?? state.formatMode ?? 'AUTO';
   state.formatMode = formatMode;
+  if (activePage) activePage.formatMode = formatMode;
 
   const shouldSave = save && $('auto-save')?.checked;
   const blobToSave = shouldSave && source instanceof Blob
@@ -695,6 +910,7 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
       try {
         const item = await library.save(displayName, blobToSave);
         editorLibraryId = item.id;
+        if (activePage) activePage.editorLibraryId = item.id;
         await renderLibrary();
       } catch (err) {
         setStatus(`Imported OK but local save failed: ${err.message}`, 'error');
@@ -706,6 +922,7 @@ async function loadLog(source, displayName = source.name ?? 'pasted logcat', sav
       ? ` (kept newest ${APP_CONFIG.maxRetainedLines.toLocaleString()} lines)`
       : '';
     setStatus(`Import complete — ${store.totalRead.toLocaleString()} lines${dropNotice}`);
+    updateEditorModeLabel();
     scheduleSessionSave();
 
   } catch (err) {
@@ -771,13 +988,23 @@ async function renderLibrary() {
         const record = await library.get(log.id);
         if (!record) return;
         try {
-          const editor = $('log-text');
-          if (editor) editor.value = await record.blob.text();
+          const text = await record.blob.text();
+          let activePage = getActivePage();
+          const currentText = $('log-text')?.value ?? '';
+
+          if (currentText.trim() && activePage) {
+            activePage = addNewPage(record.name, text, true);
+          } else {
+            if (activePage) activePage.name = record.name;
+            const editor = $('log-text');
+            if (editor) editor.value = text;
+          }
           editorLibraryId = record.id;
-          const modeEl = $('editor-mode');
-          if (modeEl) modeEl.textContent = `Saved log: ${record.name}`;
+          if (activePage) activePage.editorLibraryId = record.id;
+
           updateRawEditorGutter();
           parseEditorText();
+          renderPageTabs();
         } catch (err) {
           setStatus(`Could not open saved log: ${err.message}`, 'error');
         }
@@ -940,6 +1167,10 @@ function clearAll() {
   repositoryMap.clear();
   clearRepositoryStorage();
 
+  // Reset pages to single empty page
+  pages = [new LogPage('page_1', 'Log Page 1', '')];
+  activePageId = 'page_1';
+
   // Reset all checkboxes except auto-save
   document.querySelectorAll('input[type=checkbox]').forEach(el => {
     if (el.id !== 'auto-save') el.checked = false;
@@ -955,8 +1186,6 @@ function clearAll() {
   updateRawEditorGutter();
   if ($('level-filter')) $('level-filter').value = '';
   setFormatMode('AUTO');
-  const editorMode = $('editor-mode');
-  if (editorMode) editorMode.textContent = 'Paste Logcat or DLT logs here — changes are parsed automatically';
 
   // Reset state
   state.topView            = 'raw';
@@ -986,6 +1215,7 @@ function clearAll() {
 
   updateMetrics();
   updateRepositoryStatus();
+  renderPageTabs();
   setStatus('Ready for a log file');
   clearSession();
 }
@@ -1050,12 +1280,10 @@ function deserializeColumnFilters(serialized) {
 }
 
 function buildSessionSnapshot() {
-  const editorText = $('log-text')?.value ?? '';
+  saveActivePageState();
   return {
     version: 1,
     editorLibraryId,
-    editorText: trimEditorText(editorText),
-    editorMode: $('editor-mode')?.textContent ?? '',
     formatMode: state.formatMode,
     topView: state.topView,
     invertSearch: state.invertSearch,
@@ -1069,8 +1297,17 @@ function buildSessionSnapshot() {
     searchInput: $('search')?.value ?? '',
     quickFilterInput: $('quick-filter-input')?.value ?? '',
     autoSave: $('auto-save')?.checked !== false,
-    markedLines: [...state.markedLines],
-    lineCommands: Object.fromEntries(state.lineCommands),
+    activePageId: activePageId,
+    pages: pages.map(p => ({
+      id: p.id,
+      name: p.name,
+      content: trimEditorText(p.content || ''),
+      formatMode: p.formatMode,
+      markedLines: Array.from(p.markedLines || []),
+      lineCommands: Object.fromEntries(p.lineCommands || []),
+      editorLibraryId: p.editorLibraryId,
+      scrollTop: p.scrollTop,
+    })),
   };
 }
 
@@ -1095,7 +1332,10 @@ function applyFilterUiFromState() {
 
 async function restoreSession() {
   const saved = loadSession();
-  if (!saved) return;
+  if (!saved) {
+    renderPageTabs();
+    return;
+  }
 
   restoringSession = true;
 
@@ -1110,12 +1350,6 @@ async function restoreSession() {
     state.searchTags = deserializeRules(saved.searchTags);
     state.highlights = deserializeRules(saved.highlights, true);
     state.kpiHighlight = !!saved.kpiHighlight;
-    state.markedLines = new Set((saved.markedLines ?? []).map(Number).filter(n => n > 0));
-    state.lineCommands = new Map(
-      Object.entries(saved.lineCommands ?? {})
-        .map(([line, text]) => [Number(line), String(text ?? '').trim()])
-        .filter(([line, text]) => line > 0 && text)
-    );
 
     applyFilterUiFromState();
     if ($('search')) $('search').value = saved.searchInput ?? '';
@@ -1127,36 +1361,63 @@ async function restoreSession() {
     renderRuleList('search-tag-list', state.searchTags, scheduleFilter);
     renderRuleList('highlight-list', state.highlights, pushHighlightsToGrids);
     updateColFilterIndicators();
-    pushMarkedLinesToGrids();
-    pushLineCommandsToGrids();
-    updateRawEditorGutter();
 
-    editorLibraryId = saved.editorLibraryId ?? null;
-    let restoredText = saved.editorText ?? '';
-
-    if (editorLibraryId) {
-      try {
-        const record = await library.get(editorLibraryId);
-        if (record?.blob) restoredText = await record.blob.text();
-      } catch (err) {
-        console.warn('[Logalizer] Could not restore log from library:', err);
+    if (Array.isArray(saved.pages) && saved.pages.length > 0) {
+      pages = saved.pages.map(p => {
+        const page = new LogPage(p.id, p.name, p.content || '');
+        page.formatMode = p.formatMode || 'AUTO';
+        page.markedLines = new Set((p.markedLines || []).map(Number).filter(n => n > 0));
+        page.lineCommands = new Map(
+          Object.entries(p.lineCommands || {})
+            .map(([line, text]) => [Number(line), String(text ?? '').trim()])
+            .filter(([line, text]) => line > 0 && text)
+        );
+        page.editorLibraryId = p.editorLibraryId || null;
+        page.scrollTop = p.scrollTop || 0;
+        return page;
+      });
+      activePageId = saved.activePageId && pages.some(p => p.id === saved.activePageId)
+        ? saved.activePageId
+        : pages[0].id;
+    } else {
+      let restoredText = saved.editorText ?? '';
+      editorLibraryId = saved.editorLibraryId ?? null;
+      if (editorLibraryId) {
+        try {
+          const record = await library.get(editorLibraryId);
+          if (record?.blob) restoredText = await record.blob.text();
+        } catch (err) {
+          console.warn('[Logalizer] Could not restore log from library:', err);
+        }
       }
+      const initialPage = new LogPage('page_1', saved.editorName || 'Log Page 1', restoredText);
+      initialPage.formatMode = state.formatMode;
+      initialPage.markedLines = new Set((saved.markedLines ?? []).map(Number).filter(n => n > 0));
+      initialPage.lineCommands = new Map(
+        Object.entries(saved.lineCommands ?? {})
+          .map(([line, text]) => [Number(line), String(text ?? '').trim()])
+          .filter(([line, text]) => line > 0 && text)
+      );
+      initialPage.editorLibraryId = editorLibraryId;
+      pages = [initialPage];
+      activePageId = 'page_1';
     }
 
-    if (restoredText && $('log-text')) {
-      $('log-text').value = restoredText;
+    const activePage = getActivePage();
+    if (activePage) {
+      state.markedLines = new Set(activePage.markedLines);
+      state.lineCommands = new Map(activePage.lineCommands);
+      state.formatMode = activePage.formatMode || 'AUTO';
+      editorLibraryId = activePage.editorLibraryId || null;
+
+      if ($('log-text')) $('log-text').value = activePage.content || '';
       updateRawEditorGutter();
       parseEditorText();
-      const modeEl = $('editor-mode');
-      if (modeEl && saved.editorMode) modeEl.textContent = saved.editorMode;
+      if ($('log-text')) $('log-text').scrollTop = activePage.scrollTop || 0;
     }
 
     switchTopView(state.topView);
-
-    if (!restoredText) {
-      applyView();
-    }
-
+    renderPageTabs();
     setStatus('Restored previous session');
   } catch (err) {
     console.warn('[Logalizer] Could not restore session:', err);
@@ -1166,13 +1427,42 @@ async function restoreSession() {
   }
 }
 
+function syncSidebarContainer() {
+  const sidebar = $('sidebar');
+  const resizer = $('sidebar-resizer');
+  if (!sidebar) return;
+
+  if (document.fullscreenElement) {
+    if (sidebar.parentElement !== document.fullscreenElement) {
+      document.fullscreenElement.prepend(sidebar);
+    }
+  } else {
+    const workspace = document.querySelector('.workspace');
+    if (workspace && resizer && sidebar.parentElement !== workspace) {
+      workspace.insertBefore(sidebar, resizer);
+    }
+  }
+}
+
 // ===========================================================================
 // UI event wiring
 // ===========================================================================
 
 // --- Sidebar toggle & resizer ---
 $('sidebar-toggle')?.addEventListener('click', () => {
-  document.querySelector('.workspace')?.classList.toggle('is-sidebar-collapsed');
+  const target = document.fullscreenElement || document.querySelector('.workspace');
+  if (target) target.classList.toggle('is-sidebar-collapsed');
+});
+
+document.querySelectorAll('.pane-sidebar-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = document.fullscreenElement || document.querySelector('.workspace');
+    if (target) target.classList.toggle('is-sidebar-collapsed');
+  });
+});
+
+$('add-page-btn')?.addEventListener('click', () => {
+  addNewPage('', '', true);
 });
 
 $('sidebar-resizer')?.addEventListener('pointerdown', e => {
@@ -1235,6 +1525,8 @@ document.querySelectorAll('.pane-fullscreen').forEach(btn => {
 
 // Return overlays to body when exiting fullscreen
 document.addEventListener('fullscreenchange', () => {
+  syncSidebarContainer();
+
   const popover = $('header-filter-popover');
   const menu = $('line-context-menu');
   const cmdDialog = $('line-command-dialog');

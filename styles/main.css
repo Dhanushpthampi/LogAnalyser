@@ -504,6 +504,127 @@ body {
   overflow:   hidden;
 }
 
+/* Page Tab Bar (Multi-page Log Editor) */
+.page-tab-bar {
+  display:       flex;
+  align-items:   center;
+  gap:           6px;
+  padding:       4px 8px;
+  background:    #161b22;
+  border-bottom: 1px solid var(--line);
+  flex-shrink:   0;
+  overflow-x:    auto;
+}
+.page-tabs-list {
+  display:     flex;
+  align-items: center;
+  gap:         4px;
+  flex:        1;
+  min-width:   0;
+  overflow-x:  auto;
+}
+.page-tab {
+  display:       flex;
+  align-items:   center;
+  gap:           6px;
+  padding:       4px 10px;
+  background:    #202630;
+  border:        1px solid var(--line);
+  border-radius: 5px;
+  font:          11px/1.3 Consolas, monospace;
+  color:         var(--muted);
+  cursor:        pointer;
+  user-select:   none;
+  white-space:   nowrap;
+  transition:    all .15s ease;
+  max-width:     220px;
+}
+.page-tab:hover {
+  background: #28303d;
+  color:      var(--text);
+}
+.page-tab.is-active {
+  background:   #15191f;
+  border-color: var(--accent);
+  color:        var(--accent);
+  font-weight:  bold;
+  box-shadow:   0 1px 4px rgba(0,0,0,.25);
+}
+.page-tab-title {
+  overflow:      hidden;
+  text-overflow: ellipsis;
+  white-space:   nowrap;
+}
+.page-tab-rename {
+  background: transparent;
+  border:     none;
+  color:      var(--muted);
+  cursor:     pointer;
+  padding:    0 2px;
+  font-size:  10px;
+  opacity:    0.7;
+}
+.page-tab-rename:hover {
+  color:   var(--accent);
+  opacity: 1;
+}
+.page-tab-close {
+  background:    transparent;
+  border:        none;
+  color:         var(--muted);
+  cursor:        pointer;
+  padding:       0 3px;
+  font-size:     14px;
+  line-height:   1;
+  border-radius: 3px;
+  display:       flex;
+  align-items:   center;
+  justify-content: center;
+}
+.page-tab-close:hover {
+  color:      var(--red);
+  background: rgba(255,107,107,.15);
+}
+.add-page-btn {
+  background:    #202630;
+  border:        1px solid var(--line);
+  color:         var(--cyan);
+  padding:       4px 10px;
+  border-radius: 5px;
+  font:          11px Consolas, monospace;
+  cursor:        pointer;
+  flex-shrink:   0;
+  transition:    all .15s ease;
+}
+.add-page-btn:hover {
+  border-color: var(--cyan);
+  background:   #28303d;
+}
+
+/* Fullscreen Sidebar Overlay */
+:fullscreen {
+  position: relative !important;
+}
+:fullscreen .sidebar {
+  position:   absolute;
+  top:        34px;
+  left:       0;
+  bottom:     0;
+  width:      var(--sidebar-width, 330px);
+  max-width:  85vw;
+  z-index:    999;
+  background: #181d24;
+  border-right: 1px solid var(--line);
+  box-shadow:  6px 0 24px rgba(0, 0, 0, 0.6);
+  padding:     12px;
+  overflow-y:  auto;
+  display:     block;
+}
+:fullscreen.is-sidebar-collapsed .sidebar,
+.is-sidebar-collapsed :fullscreen .sidebar {
+  display: none !important;
+}
+
 /* Raw textarea editor */
 .raw-editor-wrap {
   flex:        1;

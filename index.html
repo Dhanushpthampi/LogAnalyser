@@ -110,12 +110,22 @@
               </div>
               <div class="panel-actions">
                 <span id="editor-mode">Live input: results update as you type or paste.</span>
+                <button class="button pane-sidebar-toggle icon-btn" type="button" title="Toggle Sidebar" aria-label="Toggle Sidebar">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="9" y1="3" x2="9" y2="21"/>
+                  </svg>
+                </button>
                 <button class="button pane-fullscreen icon-btn" data-fullscreen="top-pane-card" type="button" title="Toggle Fullscreen" aria-label="Toggle Fullscreen">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                 </button>
               </div>
             </header>
             <div class="top-pane-content">
+              <div id="page-tab-bar" class="page-tab-bar" aria-label="Log Pages">
+                <div id="page-tabs-list" class="page-tabs-list"></div>
+                <button id="add-page-btn" class="add-page-btn" type="button" title="Add new log page">+ New Page</button>
+              </div>
               <div id="raw-editor-wrap" class="raw-editor-wrap">
                 <div id="raw-editor-gutter" class="raw-editor-gutter" aria-hidden="true">1</div>
                 <div class="raw-editor-body">
@@ -154,6 +164,12 @@
                 <span id="filtered-tab-count" class="heading-badge">0</span>
               </div>
               <div class="panel-actions">
+                <button class="button pane-sidebar-toggle icon-btn" type="button" title="Toggle Sidebar" aria-label="Toggle Sidebar">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="9" y1="3" x2="9" y2="21"/>
+                  </svg>
+                </button>
                 <button class="button pane-fullscreen icon-btn" data-fullscreen="bottom-pane-card" type="button" title="Toggle Fullscreen" aria-label="Toggle Fullscreen">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                 </button>
