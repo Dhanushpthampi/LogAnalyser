@@ -351,7 +351,10 @@ export class VirtualGrid {
 
   _estimateWidth(records) {
     let longest = 0;
-    for (const r of records) {
+    // Sample up to 500 records to avoid iterating millions of lines
+    const step = records.length > 500 ? Math.floor(records.length / 500) : 1;
+    for (let i = 0; i < records.length; i += step) {
+      const r = records[i];
       if (r.message) longest = Math.max(longest, r.message.length);
     }
     // 720px base + ~7.2px per character, clamped

@@ -9,11 +9,18 @@ export async function streamLines(file, onLines, onProgress, signal) {
       if (signal?.aborted) throw new DOMException('Import cancelled', 'AbortError');
       const { value, done } = await reader.read();
       if (done) break;
-      processedBytes += new TextEncoder().encode(value).byteLength;
+      // Approximate byte count from char count (avoids new TextEncoder per chunk)
+      processedBytes += value.length;
       const text = carry + value;
       const parts = text.split(/\r?\n/);
       carry = parts.pop() ?? '';
-      for (const line of parts) { batch.push(line); if (batch.length >= APP_CONFIG.ingestBatchSize) { await onLines(batch); batch = []; } }
+      for (const line of parts) {
+        batch.push(line);
+        if (batch.length >= APP_CONFIG.ingestBatchSize) {
+          await onLines(batch);
+          batch = [];
+        }
+      }
       onProgress?.(processedBytes, file.size);
     }
     if (carry) batch.push(carry);

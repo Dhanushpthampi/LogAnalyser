@@ -704,20 +704,41 @@ function parseEditorText() {
     updateMetrics();
     updateEditorModeLabel();
     setStatus('Raw Log Editor is empty');
+    updateRawEditorGutter();
     return;
   }
 
   const rawLines = text.split(/\r?\n/);
-  const parsed   = rawLines
-    .filter((line, i) => line || i < rawLines.length - 1)   // keep all except trailing empty
-    .map((raw, i) => parseLine(raw, i + 1, formatMode));
+  const total    = (rawLines.length > 0 && rawLines[rawLines.length - 1] === '')
+    ? rawLines.length - 1
+    : rawLines.length;
 
-  store.append(parsed);
+  const CHUNK = 10000;
+  let offset = 0;
+
+  function parseChunk() {
+    const end = Math.min(offset + CHUNK, total);
+    const parsed = [];
+    for (let i = offset; i < end; i++) {
+      parsed.push(parseLine(rawLines[i], i + 1, formatMode));
+    }
+    store.append(parsed);
+    offset = end;
+
+    if (offset < total) {
+      requestAnimationFrame(parseChunk);
+    } else {
+      updateEditorModeLabel();
+      applyView();
+      scheduleEditorSave();
+      scheduleSessionSave();
+    }
+  }
+
+  // Show progress immediately
   updateEditorModeLabel();
-
-  applyView();
-  scheduleEditorSave();
-  scheduleSessionSave();
+  requestAnimationFrame(parseChunk);
+  updateRawEditorGutter();
 }
 
 function scheduleEditorSave() {
@@ -766,13 +787,61 @@ function scheduleEditorParse() {
   });
 }
 
+// Virtualized gutter — only renders visible lines instead of one span per line
+let _gutterLineCount = 0;
 function updateRawEditorGutter() {
   const editor = $('log-text');
   const gutter = $('raw-editor-gutter');
   if (!editor || !gutter) return;
-  const count = Math.max(1, editor.value.split('\n').length);
-  gutter.innerHTML = Array.from({ length: count }, (_, i) => {
-    const lineNum = i + 1;
+
+  const lineCount = Math.max(1, editor.value.split('\n').length);
+  _gutterLineCount = lineCount;
+
+  // For small files, render fully; for large, render viewport only via scroll
+  const LINE_H = 18;
+  const PAD_TOP = 10;
+  const maxRendered = 5000;
+
+  if (lineCount <= maxRendered) {
+    gutter.innerHTML = Array.from({ length: lineCount }, (_, i) => {
+      const lineNum = i + 1;
+      const marked = isLineMarked(lineNum);
+      const hasCmd = hasLineCommand(lineNum);
+      let cls = 'gutter-line';
+      if (marked) cls += ' is-marked';
+      if (hasCmd) cls += ' is-command';
+      const markIcon = marked ? '<span class="gutter-mark-icon" aria-hidden="true">★</span>' : '';
+      const cmdIcon = hasCmd ? '<span class="gutter-command-icon" aria-hidden="true">⚡</span>' : '';
+      return `<span class="${cls}" data-line="${lineNum}">${markIcon}${cmdIcon}${lineNum}</span>`;
+    }).join('');
+  } else {
+    // Large file: set a spacer div for full scroll height, render visible slice on scroll
+    gutter.style.position = 'relative';
+    gutter.style.overflowY = 'hidden';
+    gutter.innerHTML = `<div class="gutter-spacer" style="height:${lineCount * LINE_H + PAD_TOP}px;pointer-events:none"></div>`;
+    _renderGutterViewport(editor, gutter, LINE_H, PAD_TOP, lineCount);
+  }
+
+  updateRawEditorMarkers();
+}
+
+function _renderGutterViewport(editor, gutter, LINE_H, PAD_TOP, lineCount) {
+  const scrollTop = editor.scrollTop;
+  const viewH = gutter.clientHeight || 400;
+  const startLine = Math.max(1, Math.floor(scrollTop / LINE_H));
+  const endLine   = Math.min(lineCount, startLine + Math.ceil(viewH / LINE_H) + 4);
+
+  let rows = gutter.querySelector('.gutter-rows');
+  if (!rows) {
+    rows = document.createElement('div');
+    rows.className = 'gutter-rows';
+    rows.style.cssText = 'position:absolute;top:0;left:0;width:100%';
+    gutter.appendChild(rows);
+  }
+
+  rows.style.transform = `translateY(${PAD_TOP + (startLine - 1) * LINE_H}px)`;
+  rows.innerHTML = Array.from({ length: endLine - startLine + 1 }, (_, k) => {
+    const lineNum = startLine + k;
     const marked = isLineMarked(lineNum);
     const hasCmd = hasLineCommand(lineNum);
     let cls = 'gutter-line';
@@ -780,9 +849,8 @@ function updateRawEditorGutter() {
     if (hasCmd) cls += ' is-command';
     const markIcon = marked ? '<span class="gutter-mark-icon" aria-hidden="true">★</span>' : '';
     const cmdIcon = hasCmd ? '<span class="gutter-command-icon" aria-hidden="true">⚡</span>' : '';
-    return `<span class="${cls}" data-line="${lineNum}">${markIcon}${cmdIcon}${lineNum}</span>`;
+    return `<span class="${cls}" data-line="${lineNum}" style="display:block">${markIcon}${cmdIcon}${lineNum}</span>`;
   }).join('');
-  updateRawEditorMarkers();
 }
 
 function updateRawEditorMarkers() {
@@ -810,7 +878,13 @@ function syncRawEditorGutterScroll() {
   const gutter = $('raw-editor-gutter');
   const inner = $('raw-editor-markers-inner');
   const scrollTop = editor?.scrollTop ?? 0;
-  if (gutter) gutter.scrollTop = scrollTop;
+  if (gutter) {
+    gutter.scrollTop = scrollTop;
+    // Re-render viewport for large files
+    if (_gutterLineCount > 5000) {
+      _renderGutterViewport(editor, gutter, 18, 10, _gutterLineCount);
+    }
+  }
   if (inner) inner.style.transform = `translateY(-${scrollTop}px)`;
 }
 

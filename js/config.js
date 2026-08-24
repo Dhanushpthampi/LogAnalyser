@@ -1,9 +1,9 @@
 export const APP_CONFIG = Object.freeze({
   maxRetainedLines: 750000,
-  renderOverscan: 16,
+  renderOverscan: 8,
   rowHeight: 29,
-  filterDebounceMs: 180,
-  ingestBatchSize: 1500,
+  filterDebounceMs: 120,
+  ingestBatchSize: 8000,
   streamChunkSize: 1024 * 1024,
 });
 
