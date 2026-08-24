@@ -79,11 +79,10 @@ function saveActivePageState() {
 }
 
 function updateEditorModeLabel() {
-  const page = getActivePage();
   const modeEl = $('editor-mode');
-  if (modeEl && page) {
+  if (modeEl) {
     const lineCount = store.lines.length;
-    modeEl.textContent = `File: ${page.name} · ${lineCount.toLocaleString()} lines parsed`;
+    modeEl.textContent = lineCount > 0 ? `${lineCount.toLocaleString()} lines parsed` : '';
   }
 }
 
@@ -231,14 +230,24 @@ function closePage(pageId) {
   }
 }
 
-function renamePage(pageId) {
+async function renamePage(pageId) {
   const page = pages.find(p => p.id === pageId);
   if (!page) return;
 
-  const newName = prompt('Rename page/file:', page.name);
+  const newName = prompt('Rename file / page:', page.name);
   if (!newName || !newName.trim() || newName.trim() === page.name) return;
 
   page.name = newName.trim();
+
+  if (page.editorLibraryId) {
+    try {
+      await library.rename(page.editorLibraryId, page.name);
+      await renderLibrary();
+    } catch (err) {
+      console.warn('[Logalizer] Could not rename in saved log library:', err);
+    }
+  }
+
   renderPageTabs();
   scheduleSessionSave();
 }
@@ -712,38 +721,40 @@ function parseEditorText() {
 }
 
 function scheduleEditorSave() {
-  if (!$('auto-save')?.checked) return;
+  if (restoringSession || !$('auto-save')?.checked) return;
   clearTimeout(editorSaveTimer);
   editorSaveTimer = setTimeout(saveEditorToLibrary, 1500);
 }
 
 async function saveEditorToLibrary() {
-  if (!$('auto-save')?.checked) return;
+  if (restoringSession || !$('auto-save')?.checked) return;
 
   const text = $('log-text')?.value ?? '';
   if (!text.trim()) return;
 
   const activePage = getActivePage();
+  if (!activePage) return;
+
   const blob = new Blob([text], { type: 'text/plain' });
 
   try {
-    if (editorLibraryId) {
-      await library.update(editorLibraryId, {
+    const libId = editorLibraryId || activePage.editorLibraryId;
+    if (libId) {
+      await library.update(libId, {
         blob,
         size: blob.size,
+        name: activePage.name,
         savedAt: Date.now(),
       });
     } else {
-      const name = activePage ? activePage.name : `Pasted log · ${new Date().toLocaleString()}`;
-      const item = await library.save(name, blob);
+      const item = await library.save(activePage.name, blob);
       editorLibraryId = item.id;
-      if (activePage) activePage.editorLibraryId = item.id;
+      activePage.editorLibraryId = item.id;
     }
     await renderLibrary();
     scheduleSessionSave();
   } catch (err) {
     console.warn('[Logalizer] Editor save failed:', err);
-    setStatus(`Could not save to library: ${err.message}`, 'error');
   }
 }
 
@@ -851,9 +862,15 @@ function onRowSelect(record) {
 // File / stream import
 // ---------------------------------------------------------------------------
 
-async function loadLog(source, displayName = source.name ?? 'pasted logcat', save = true) {
+async function loadLog(source, displayName = source.name ?? (getActivePage()?.name || 'Log Page 1'), save = true) {
   abortController?.abort();
   abortController = new AbortController();
+
+  const existingTab = pages.find(p => p.name === displayName);
+  if (existingTab) {
+    switchPage(existingTab.id);
+    return;
+  }
 
   let activePage = getActivePage();
   const currentText = $('log-text')?.value ?? '';
@@ -968,6 +985,14 @@ async function renderLibrary() {
   if (!container) return;
 
   try {
+    const rawLogs = await library.list();
+
+    for (const log of rawLogs) {
+      if (log.name.toLowerCase().includes('pasted log')) {
+        await library.remove(log.id);
+      }
+    }
+
     const logs = await library.list();
     container.replaceChildren();
 
@@ -989,22 +1014,36 @@ async function renderLibrary() {
         if (!record) return;
         try {
           const text = await record.blob.text();
-          let activePage = getActivePage();
+          const existingTab = pages.find(
+            p => p.editorLibraryId === record.id || p.name === record.name
+          );
+
+          if (existingTab) {
+            switchPage(existingTab.id);
+            return;
+          }
+
+          const activePage = getActivePage();
           const currentText = $('log-text')?.value ?? '';
 
-          if (currentText.trim() && activePage) {
-            activePage = addNewPage(record.name, text, true);
-          } else {
-            if (activePage) activePage.name = record.name;
+          if (!currentText.trim() && activePage && !activePage.editorLibraryId) {
+            activePage.name = record.name;
+            activePage.content = text;
+            activePage.editorLibraryId = record.id;
             const editor = $('log-text');
             if (editor) editor.value = text;
+            editorLibraryId = record.id;
+            updateRawEditorGutter();
+            parseEditorText();
+            renderPageTabs();
+          } else {
+            const newPage = addNewPage(record.name, text, true);
+            newPage.editorLibraryId = record.id;
+            editorLibraryId = record.id;
+            updateRawEditorGutter();
+            parseEditorText();
+            renderPageTabs();
           }
-          editorLibraryId = record.id;
-          if (activePage) activePage.editorLibraryId = record.id;
-
-          updateRawEditorGutter();
-          parseEditorText();
-          renderPageTabs();
         } catch (err) {
           setStatus(`Could not open saved log: ${err.message}`, 'error');
         }
@@ -1019,6 +1058,11 @@ async function renderLibrary() {
         const newName = prompt('Rename log to:', log.name)?.trim();
         if (!newName || newName === log.name) return;
         await library.rename(log.id, newName);
+        const matchingPage = pages.find(p => p.editorLibraryId === log.id);
+        if (matchingPage) {
+          matchingPage.name = newName;
+          renderPageTabs();
+        }
         renderLibrary();
       });
 

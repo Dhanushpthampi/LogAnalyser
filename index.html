@@ -21,25 +21,28 @@
       </header>
       <div class="workspace">
         <aside id="sidebar" class="sidebar" aria-label="Log analyzer controls">
-          <section class="side-section">
-            <h2>Log format mode</h2>
-            <div id="format-toggle-group" class="segmented-control" role="group" aria-label="Log format mode toggle">
-              <button type="button" class="segment-btn is-active" data-format="AUTO" title="Auto-detect format per line">Auto-detect</button>
-              <button type="button" class="segment-btn" data-format="DLT" title="Force DLT Automotive Log mode">DLT Logs</button>
-              <button type="button" class="segment-btn" data-format="LOGCAT" title="Force Android Logcat mode">Logcat Logs</button>
+          <section class="side-section side-section--compact">
+            <h2>Filter results</h2>
+            <div class="inline-add">
+              <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="Tag regex (e.g. onPlay|Exception)" />
+              <button id="add-search-tag" class="button" type="button" title="Add search tag">+</button>
             </div>
-            <select id="log-format" hidden>
-              <option value="AUTO">Auto-detect (DLT / Logcat)</option>
-              <option value="DLT">DLT Automotive Format</option>
-              <option value="LOGCAT">Android Logcat Format</option>
-            </select>
-            <label class="file-drop" id="log-drop-zone">
-              <input id="log-file" type="file" accept=".log,.txt,.dlt,text/plain" />
-              <strong>Open log file</strong>
-              <span>Drop or select a Logcat or DLT file</span>
-            </label>
-            <label class="check save-option"><input id="auto-save" type="checkbox" checked /> Save imports to this browser</label>
-            <p class="side-empty">Paste and edit text in the Raw Log Editor workspace.</p>
+            <div id="search-tag-list" class="custom-filter-list"></div>
+            <div class="side-options-group">
+              <label class="check"><input id="invert-search" type="checkbox" /> Hide match</label>
+              <label class="check"><input id="case-sensitive" type="checkbox" /> Case match</label>
+              <label class="check"><input id="filter-by-repository" type="checkbox" /> Repo only</label>
+            </div>
+          </section>
+
+          <section class="side-section side-section--compact">
+            <h2>Highlight (does not filter)</h2>
+            <div class="inline-add">
+              <input id="highlight-pattern" type="text" autocomplete="off" placeholder="Pattern (e.g. usbSlot|Exception)" />
+              <button id="add-highlight" class="button" type="button" title="Add highlight pattern">+</button>
+            </div>
+            <div id="highlight-list" class="custom-filter-list"></div>
+            <label class="check kpi-toggle" style="margin-top: 6px;"><input id="kpi-highlight" type="checkbox" /> Emphasize KPI markers <code>[KPI_...]</code></label>
           </section>
 
           <section class="side-section library-section">
@@ -49,38 +52,21 @@
             </div>
           </section>
 
-          <section class="side-section">
-            <h2>Filter results</h2>
-            <label for="search" class="field-label">Search regex tags</label>
-            <div class="inline-add">
-              <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="onPlay|Exception" />
-              <button id="add-search-tag" class="button" type="button" title="Add search tag">+</button>
+          <section class="side-section side-section--compact">
+            <div class="side-header-row">
+              <h2>Log Format</h2>
+              <select id="log-format" class="side-compact-select">
+                <option value="AUTO">Auto-detect</option>
+                <option value="DLT">DLT Automotive</option>
+                <option value="LOGCAT">Android Logcat</option>
+              </select>
             </div>
-            <div id="search-tag-list" class="custom-filter-list"></div>
-            <label class="check"><input id="invert-search" type="checkbox" /> Hide matching lines</label>
-            
-            <label for="level-filter" class="field-label">Log level</label>
-            <select id="level-filter">
-              <option value="">All levels</option>
-              <option value="V">V (Verbose)</option>
-              <option value="D">D (Debug)</option>
-              <option value="I">I (Info)</option>
-              <option value="W">W (Warning)</option>
-              <option value="E">E (Error)</option>
-              <option value="F">F (Fatal)</option>
-            </select>
-            <label class="check"><input id="case-sensitive" type="checkbox" /> Case sensitive</label>
-            <label class="check"><input id="filter-by-repository" type="checkbox" /> Only show repository map components</label>
-          </section>
-
-          <section class="side-section">
-            <h2>Highlight (does not filter)</h2>
-            <label class="check kpi-toggle"><input id="kpi-highlight" type="checkbox" /> Emphasize KPI markers <code>[KPI_...]</code></label>
-            <div class="inline-add">
-              <input id="highlight-pattern" type="text" autocomplete="off" placeholder="usbSlot|Exception" />
-              <button id="add-highlight" class="button" type="button" title="Add highlight pattern">+</button>
-            </div>
-            <div id="highlight-list" class="custom-filter-list"></div>
+            <label class="file-drop file-drop--compact" id="log-drop-zone">
+              <input id="log-file" type="file" accept=".log,.txt,.dlt,text/plain" />
+              <strong>Open log file</strong>
+              <span>Drop or select a Logcat / DLT file</span>
+            </label>
+            <label class="check save-option"><input id="auto-save" type="checkbox" checked /> Save imports to browser</label>
           </section>
 
           <section class="side-section">
@@ -104,12 +90,11 @@
         <section class="analysis-panel">
           <section class="top-pane-card">
             <header class="panel-heading">
-              <div class="top-view-tabs" aria-label="Top pane view">
-                <button class="top-tab is-active" data-top-view="raw" type="button">Raw Log Editor</button>
-                <button class="top-tab" data-top-view="all" type="button">All Retained Lines <span id="all-tab-count" class="tab-badge">0</span></button>
+              <div class="heading-title">
+                <strong>Raw Log Editor</strong>
               </div>
               <div class="panel-actions">
-                <span id="editor-mode">Live input: results update as you type or paste.</span>
+                <span id="editor-mode"></span>
                 <button class="button pane-sidebar-toggle icon-btn" type="button" title="Toggle Sidebar" aria-label="Toggle Sidebar">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>

@@ -170,6 +170,40 @@ body {
   letter-spacing: .06em;
   text-transform: uppercase;
 }
+.side-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.side-header-row h2 {
+  margin: 0;
+  white-space: nowrap;
+}
+.side-compact-select {
+  width: auto !important;
+  flex: 1;
+  max-width: 170px;
+  padding: 3px 6px !important;
+  font-size: 0.72rem !important;
+  background: #15191f;
+  color: var(--accent);
+  border: 1px solid #4b5564;
+  border-radius: 4px;
+}
+.side-options-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 8px;
+}
+.side-options-group .check {
+  margin-top: 0;
+  font-size: .68rem;
+  white-space: nowrap;
+}
 .side-section textarea,
 .side-section input:not([type=checkbox]),
 .side-section select {
