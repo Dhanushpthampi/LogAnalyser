@@ -25,6 +25,7 @@ import {
 } from './repository-map.js';
 import { parseColorToRgb } from './color-utils.js';
 import { saveSession, loadSession, clearSession, trimEditorText } from './session-storage.js';
+import { FlowMapEngine, DEFAULT_RULES } from './flow-map.js';
 
 // ---------------------------------------------------------------------------
 // Singletons
@@ -34,9 +35,51 @@ const $ = id => document.getElementById(id);
 
 const store            = new LogStore();
 const library          = new LogLibrary();
+const flowEngine       = new FlowMapEngine();
 
 const allGrid      = new VirtualGrid($('all-log-grid'),      onRowSelect);
 const filteredGrid = new VirtualGrid($('filtered-log-grid'), onRowSelect);
+
+flowEngine.setRowSelectCallback(onRowSelect);
+
+// Highlight the exact log line that triggered a flow node
+// Select the line in the editor + grids without switching panes
+flowEngine.setHighlightCallback((record) => {
+  // Select the line in both virtual grids
+  if (allGrid) {
+    allGrid.selectedLine = record.line;
+    allGrid.scrollToLine(record.line);
+  }
+  if (filteredGrid) {
+    filteredGrid.selectedLine = record.line;
+    filteredGrid.scrollToLine(record.line);
+  }
+
+  // Also scroll to and select it in the raw editor if possible
+  const editor = $('log-text');
+  if (editor?.value) {
+    const lines = editor.value.split('\n');
+    let lineIndex = Math.max(0, record.line - 1);
+    if (lineIndex >= lines.length || (record.raw && !lines[lineIndex].includes(record.raw.trim().slice(0, 25)))) {
+      const found = lines.findIndex(l => record.raw && l.trim() === record.raw.trim());
+      if (found !== -1) lineIndex = found;
+    }
+    if (lineIndex < lines.length) {
+      let charStart = 0;
+      for (let i = 0; i < lineIndex; i++) charStart += lines[i].length + 1;
+      const charEnd = charStart + lines[lineIndex].replace(/\r$/, '').length;
+      const estimatedLineH = 18;
+      editor.scrollTop = Math.max(0, lineIndex * estimatedLineH - editor.clientHeight / 2);
+      syncRawEditorGutterScroll();
+      // Only move selection if editor is the active pane
+      if (state.topView === 'raw') {
+        editor.focus();
+        editor.setSelectionRange(charStart, charEnd);
+      }
+    }
+  }
+  setStatus(`Flow node: L${record.line} selected`);
+});
 
 let contextMenuRecord  = null;
 let commandDialogLine  = null;
@@ -514,7 +557,13 @@ function showLineContextMenu(e, record) {
   menu.querySelector('[data-action="remove-command"]').hidden = !hasCmd;
 
   const gotoBtn = menu.querySelector('[data-action="goto"]');
-  if (gotoBtn) gotoBtn.hidden = !($('log-text')?.value);
+  const gotoFilteredBtn = menu.querySelector('[data-action="goto-filtered"]');
+
+  const isFromRaw = e.target.closest('#log-text') || e.target.closest('.raw-editor-wrap');
+  const isFromFiltered = e.target.closest('#filtered-log-grid');
+
+  if (gotoBtn) gotoBtn.hidden = isFromRaw || !($('log-text')?.value);
+  if (gotoFilteredBtn) gotoFilteredBtn.hidden = !!isFromFiltered;
 
   menu.hidden = false;
 
@@ -656,9 +705,13 @@ function handleCommandDblClick(e, record) {
   showCommandViewer(record.line, e.clientX, e.clientY);
 }
 
-// ---------------------------------------------------------------------------
-// Core view update
-// ---------------------------------------------------------------------------
+function updateFlowMap() {
+  const sidebar = $('flow-sidebar');
+  if (!sidebar || sidebar.hidden) return;
+  const records = filteredGrid.records.length > 0 ? filteredGrid.records : store.lines;
+  flowEngine.evaluate(records);
+  flowEngine.renderNodeView($('flow-nodes-view'));
+}
 
 function applyView() {
   const sidebarSearch = $('search')?.value ?? '';
@@ -673,6 +726,7 @@ function applyView() {
   pushMarkedLinesToGrids();
   pushLineCommandsToGrids();
   updateMetrics();
+  updateFlowMap();
 
   if (store.lines.length) {
     setStatus(
@@ -1656,6 +1710,7 @@ document.querySelectorAll('.pane-fullscreen').forEach(btn => {
 // Return overlays to body when exiting fullscreen
 document.addEventListener('fullscreenchange', () => {
   syncSidebarContainer();
+  syncFlowSidebarContainer();
 
   const popover = $('header-filter-popover');
   const menu = $('line-context-menu');
@@ -1675,6 +1730,184 @@ document.addEventListener('fullscreenchange', () => {
     const btn = document.querySelector(`.col-filter-btn[data-col="${_activeColFilter}"]`);
     if (btn) openColFilterPopover(_activeColFilter, btn);
   }
+});
+
+// --- Sequence Flow Mini-Map Drawer ---
+function syncFlowSidebarContainer() {
+  const sidebar = $('flow-sidebar');
+  if (!sidebar) return;
+
+  if (document.fullscreenElement) {
+    if (sidebar.parentElement !== document.fullscreenElement) {
+      document.fullscreenElement.appendChild(sidebar);
+    }
+  } else {
+    if (sidebar.parentElement !== document.body) {
+      document.body.appendChild(sidebar);
+    }
+  }
+}
+
+// --- Flow Sidebar Left-Edge Resizer ---
+$('flow-sidebar-resizer')?.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const sidebar = $('flow-sidebar');
+  if (!sidebar) return;
+
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = sidebar.getBoundingClientRect().width;
+
+  const onMove = ev => {
+    // Dragging left increases width, dragging right decreases it
+    const newWidth = Math.max(280, Math.min(window.innerWidth * 0.85, startWidth + (startX - ev.clientX)));
+    sidebar.style.width = `${newWidth}px`;
+  };
+
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+});
+
+function toggleFlowSidebar() {
+  const sidebar = $('flow-sidebar');
+  if (!sidebar) return;
+
+  const isOpening = sidebar.hidden;
+  if (isOpening) {
+    sidebar.hidden = false;
+    syncFlowSidebarContainer();
+    updateFlowMap();
+    if (flowEngine.activeTab === 'json') {
+      const jsonInput = $('flow-json-input');
+      if (jsonInput) jsonInput.value = JSON.stringify(flowEngine.rules, null, 2);
+    }
+  } else {
+    sidebar.hidden = true;
+  }
+}
+
+document.querySelectorAll('.pane-flow-toggle').forEach(btn => {
+  btn.addEventListener('click', toggleFlowSidebar);
+});
+
+$('flow-sidebar-close')?.addEventListener('click', () => {
+  const sidebar = $('flow-sidebar');
+  if (sidebar) sidebar.hidden = true;
+});
+
+// Flow Map Tabs
+$('flow-tab-nodes')?.addEventListener('click', () => {
+  flowEngine.activeTab = 'nodes';
+  $('flow-tab-nodes')?.classList.add('is-active');
+  $('flow-tab-json')?.classList.remove('is-active');
+  $('flow-nodes-tab-content').hidden = false;
+  $('flow-json-tab-content').hidden = true;
+  updateFlowMap();
+});
+
+$('flow-tab-json')?.addEventListener('click', () => {
+  flowEngine.activeTab = 'json';
+  $('flow-tab-json')?.classList.add('is-active');
+  $('flow-tab-nodes')?.classList.remove('is-active');
+  $('flow-json-tab-content').hidden = false;
+  $('flow-nodes-tab-content').hidden = true;
+  const jsonInput = $('flow-json-input');
+  if (jsonInput) {
+    jsonInput.value = JSON.stringify(flowEngine.rules, null, 2);
+  }
+  const statusEl = $('flow-json-status');
+  if (statusEl) statusEl.hidden = true;
+});
+
+// JSON Editor Live Validation & Update
+function handleJsonUpdate() {
+  const input = $('flow-json-input');
+  const statusEl = $('flow-json-status');
+  if (!input || !statusEl) return;
+
+  const text = input.value.trim();
+  if (!text) {
+    statusEl.className = 'flow-json-status is-error';
+    statusEl.textContent = 'JSON rules cannot be empty';
+    statusEl.hidden = false;
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) {
+      statusEl.className = 'flow-json-status is-error';
+      statusEl.textContent = 'Rules must be a JSON array of node rule objects.';
+      statusEl.hidden = false;
+      return;
+    }
+
+    flowEngine.saveRules(parsed);
+    statusEl.className = 'flow-json-status is-success';
+    statusEl.textContent = `✓ Rules updated successfully (${parsed.length} sequence nodes).`;
+    statusEl.hidden = false;
+    updateFlowMap();
+  } catch (err) {
+    statusEl.className = 'flow-json-status is-error';
+    statusEl.textContent = `JSON Error: ${err.message}`;
+    statusEl.hidden = false;
+  }
+}
+
+$('flow-json-input')?.addEventListener('input', handleJsonUpdate);
+
+$('flow-json-format')?.addEventListener('click', () => {
+  const input = $('flow-json-input');
+  if (!input) return;
+  try {
+    const parsed = JSON.parse(input.value);
+    input.value = JSON.stringify(parsed, null, 2);
+    handleJsonUpdate();
+  } catch (err) {
+    handleJsonUpdate();
+  }
+});
+
+$('flow-json-sample')?.addEventListener('click', () => {
+  flowEngine.saveRules(DEFAULT_RULES);
+  const input = $('flow-json-input');
+  if (input) input.value = JSON.stringify(DEFAULT_RULES, null, 2);
+  handleJsonUpdate();
+});
+
+$('flow-json-reset')?.addEventListener('click', () => {
+  const rules = flowEngine.resetDefaultRules();
+  const input = $('flow-json-input');
+  if (input) input.value = JSON.stringify(rules, null, 2);
+  handleJsonUpdate();
+});
+
+// Flow Zoom Controls
+$('flow-zoom-in')?.addEventListener('click', () => {
+  flowEngine.zoom = Math.min(2.5, flowEngine.zoom * 1.2);
+  updateFlowMap();
+});
+
+$('flow-zoom-out')?.addEventListener('click', () => {
+  flowEngine.zoom = Math.max(0.4, flowEngine.zoom / 1.2);
+  updateFlowMap();
+});
+
+$('flow-zoom-reset')?.addEventListener('click', () => {
+  flowEngine.zoom = 1.0;
+  flowEngine.panX = 0;
+  flowEngine.panY = 0;
+  updateFlowMap();
+});
+
+$('flow-reset-nodes')?.addEventListener('click', () => {
+  flowEngine.resetNodePositions();
+  updateFlowMap();
 });
 
 // --- File import ---
@@ -1729,6 +1962,17 @@ $('line-context-menu')?.addEventListener('click', e => {
       break;
     case 'goto':
       onRowSelect(contextMenuRecord);
+      break;
+    case 'goto-filtered':
+      {
+        const index = filteredGrid.records.findIndex(r => r.line === line);
+        if (index >= 0) {
+          filteredGrid.selectedLine = line;
+          filteredGrid.scrollToLine(line);
+        } else {
+          setStatus(`Line ${line} does not exist in filtered results.`);
+        }
+      }
       break;
     case 'add-command':
       showCommandDialog(line);
